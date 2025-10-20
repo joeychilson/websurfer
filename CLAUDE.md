@@ -65,6 +65,24 @@ go vet ./...
 go mod tidy
 ```
 
+### System Dependencies
+
+The PDF parser requires `pdftotext` to be installed:
+
+```bash
+# macOS
+brew install poppler
+
+# Ubuntu/Debian
+sudo apt-get install poppler-utils
+
+# Alpine (for Docker)
+apk add poppler-utils
+
+# Fedora/RHEL
+sudo dnf install poppler-utils
+```
+
 ## Architecture
 
 ### Request Flow
@@ -116,15 +134,21 @@ Key configuration capabilities:
 
 The parser system (`parser/`) is extensible and content-type aware:
 
-- **Parser Registry**: Maps content-types (e.g., "text/html", "application/xhtml+xml") to parser implementations
+- **Parser Registry**: Maps content-types (e.g., "text/html", "application/xhtml+xml", "application/pdf") to parser implementations
 - **HTML Parser** (`parser/html/`):
   - Uses bluemonday for HTML sanitization
   - Applies custom rules for site-specific transformations
   - Example: `parser/rules/sec.go` handles SEC.gov EDGAR document formatting, preserving table structure while cleaning noise
+- **PDF Parser** (`parser/pdf/`):
+  - Converts PDF documents to plain text using the `pdftotext` command-line tool
+  - Uses `-layout` flag to maintain original physical layout of text
+  - Uses `-nopgbrk` flag to disable page break characters in output
+  - Requires `pdftotext` to be installed and available in PATH (typically from poppler-utils package)
 - **Context-aware**: URLs can be passed via context to parsers for intelligent processing
 
 Current parsers registered by default:
 - HTML parser with SEC.gov-specific rules
+- PDF parser (requires pdftotext)
 
 ### Caching Strategy
 

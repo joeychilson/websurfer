@@ -17,6 +17,7 @@ import (
 	"github.com/joeychilson/websurfer/logger"
 	"github.com/joeychilson/websurfer/parser"
 	htmlparser "github.com/joeychilson/websurfer/parser/html"
+	"github.com/joeychilson/websurfer/parser/pdf"
 	"github.com/joeychilson/websurfer/parser/rules"
 	"github.com/joeychilson/websurfer/ratelimit"
 	"github.com/joeychilson/websurfer/retry"
@@ -71,14 +72,17 @@ func New(cfg *config.Config) (*Client, error) {
 	limiterConfig.RespectRetryAfter = true
 	limiter := ratelimit.New(limiterConfig)
 
-	parserRegistry := parser.New()
 	htmlParser := htmlparser.New(
 		htmlparser.WithRules(
 			rules.NewSECRule(),
 			rules.NewSECTableRule(),
 		),
 	)
+	pdfParser := pdf.New()
+
+	parserRegistry := parser.New()
 	parserRegistry.Register([]string{"text/html", "application/xhtml+xml"}, htmlParser)
+	parserRegistry.Register([]string{"application/pdf"}, pdfParser)
 
 	return &Client{
 		config:         cfg,
