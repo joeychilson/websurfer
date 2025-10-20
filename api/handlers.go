@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,11 +30,13 @@ type Metadata struct {
 	URL             string `json:"url"`
 	StatusCode      int    `json:"status_code"`
 	ContentType     string `json:"content_type"`
+	Language        string `json:"language,omitempty"`
 	Title           string `json:"title,omitempty"`
 	Description     string `json:"description,omitempty"`
+	EstimatedTokens int    `json:"estimated_tokens"`
+	LastModified    string `json:"last_modified,omitempty"`
 	CacheState      string `json:"cache_state,omitempty"`
 	CachedAt        string `json:"cached_at,omitempty"`
-	EstimatedTokens int    `json:"estimated_tokens"`
 }
 
 // FetchResponse represents the response from a fetch request.
@@ -178,6 +181,16 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 		contentType = ct[0]
 	}
 
+	lastModified := ""
+	if lm, ok := fetched.Headers["Last-Modified"]; ok && len(lm) > 0 {
+		lastModified = lm[0]
+	}
+
+	language := ""
+	if strings.Contains(strings.ToLower(contentType), "html") {
+		language = extractLanguage(bodyText)
+	}
+
 	workingText := bodyText
 	if req.Range != nil {
 		extracted, err := content.ExtractRange(workingText, req.Range)
@@ -194,10 +207,12 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 			URL:             fetched.URL,
 			StatusCode:      fetched.StatusCode,
 			ContentType:     contentType,
+			Language:        language,
 			Title:           fetched.Title,
 			Description:     fetched.Description,
-			CacheState:      fetched.CacheState,
 			EstimatedTokens: truncation.ReturnedTokens,
+			LastModified:    lastModified,
+			CacheState:      fetched.CacheState,
 		}
 
 		if !fetched.CachedAt.IsZero() {
@@ -230,10 +245,12 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 		URL:             fetched.URL,
 		StatusCode:      fetched.StatusCode,
 		ContentType:     contentType,
+		Language:        language,
 		Title:           fetched.Title,
 		Description:     fetched.Description,
-		CacheState:      fetched.CacheState,
 		EstimatedTokens: estimatedTokens,
+		LastModified:    lastModified,
+		CacheState:      fetched.CacheState,
 	}
 
 	if !fetched.CachedAt.IsZero() {
@@ -770,4 +787,20 @@ func hasNoIndex(body []byte, headers map[string][]string) bool {
 	}
 
 	return false
+}
+
+// extractLanguage extracts the language code from HTML's lang attribute.
+// It looks for the lang attribute on the <html> tag and returns the primary language code.
+// For example: "en-US" becomes "en", "fr" remains "fr".
+func extractLanguage(htmlContent string) string {
+	langRegex := regexp.MustCompile(`(?i)<html[^>]+lang=["']([^"']+)["']`)
+	matches := langRegex.FindStringSubmatch(htmlContent)
+	if len(matches) > 1 {
+		langCode := strings.TrimSpace(matches[1])
+		if idx := strings.Index(langCode, "-"); idx != -1 {
+			langCode = langCode[:idx]
+		}
+		return strings.ToLower(langCode)
+	}
+	return ""
 }
