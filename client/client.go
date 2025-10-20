@@ -164,17 +164,23 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 						refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 						defer cancel()
 
-						newEntry, err := c.fetchAndCache(refreshCtx, urlStr)
+						newEntry, err := c.fetchAndCacheConditional(refreshCtx, urlStr, entry.LastModified)
 						if err == nil && newEntry != nil {
 							if err := c.cache.Set(refreshCtx, newEntry); err != nil {
 								c.logger.Error("background refresh cache set failed", "url", urlStr, "error", err)
 							} else {
-								c.logger.Debug("background refresh completed", "url", urlStr)
+								c.logger.Debug("background refresh completed with new content", "url", urlStr)
+							}
+						} else if err == nil && newEntry == nil {
+							c.logger.Debug("background refresh: content not modified", "url", urlStr)
+							entry.StoredAt = time.Now()
+							if err := c.cache.Set(refreshCtx, entry); err != nil {
+								c.logger.Error("background refresh timestamp update failed", "url", urlStr, "error", err)
+							} else {
+								c.logger.Debug("background refresh completed (not modified)", "url", urlStr)
 							}
 						} else if err != nil {
 							c.logger.Error("background refresh failed", "url", urlStr, "error", err)
-						} else {
-							c.logger.Warn("background refresh returned nil entry without error", "url", urlStr)
 						}
 					}()
 				} else {
@@ -304,6 +310,13 @@ func (c *Client) Close() error {
 
 // fetchAndCache performs the actual fetch operation with all protections.
 func (c *Client) fetchAndCache(ctx context.Context, urlStr string) (*cache.Entry, error) {
+	return c.fetchAndCacheConditional(ctx, urlStr, "")
+}
+
+// fetchAndCacheConditional performs the actual fetch operation with conditional request support.
+// If cachedLastModified is provided, it sends an If-Modified-Since header.
+// If the server responds with 304 Not Modified, returns nil entry (caller should reuse cached content).
+func (c *Client) fetchAndCacheConditional(ctx context.Context, urlStr string, cachedLastModified string) (*cache.Entry, error) {
 	resolved := c.config.GetConfigForURL(urlStr)
 
 	var crawlDelay time.Duration
@@ -335,14 +348,36 @@ func (c *Client) fetchAndCache(ctx context.Context, urlStr string) (*cache.Entry
 	f := fetcher.New(resolved.Fetch)
 	r := retry.New(f, c.limiter, resolved.Retry)
 
-	fetcherResp, err := r.Fetch(ctx, urlStr)
+	var fetcherResp *fetcher.Response
+	var err error
+
+	if cachedLastModified != "" {
+		c.logger.Debug("using conditional request", "url", urlStr, "if_modified_since", cachedLastModified)
+		opts := &fetcher.FetchOptions{
+			IfModifiedSince: cachedLastModified,
+		}
+		fetcherResp, err = r.FetchWithOptions(ctx, urlStr, opts)
+	} else {
+		fetcherResp, err = r.Fetch(ctx, urlStr)
+	}
+
 	if err != nil {
 		return nil, err
+	}
+
+	if fetcherResp.StatusCode == 304 {
+		c.logger.Debug("content not modified, reusing cached content", "url", urlStr)
+		return nil, nil
 	}
 
 	contentType := ""
 	if ct, ok := fetcherResp.Headers["Content-Type"]; ok && len(ct) > 0 {
 		contentType = ct[0]
+	}
+
+	lastModified := ""
+	if lm, ok := fetcherResp.Headers["Last-Modified"]; ok && len(lm) > 0 {
+		lastModified = lm[0]
 	}
 
 	title := ""
@@ -372,13 +407,14 @@ func (c *Client) fetchAndCache(ctx context.Context, urlStr string) (*cache.Entry
 	}
 
 	return &cache.Entry{
-		URL:         fetcherResp.URL,
-		StatusCode:  fetcherResp.StatusCode,
-		Headers:     fetcherResp.Headers,
-		Body:        body,
-		Title:       title,
-		Description: description,
-		StoredAt:    time.Now(),
+		URL:          fetcherResp.URL,
+		StatusCode:   fetcherResp.StatusCode,
+		Headers:      fetcherResp.Headers,
+		Body:         body,
+		Title:        title,
+		Description:  description,
+		LastModified: lastModified,
+		StoredAt:     time.Now(),
 	}, nil
 }
 

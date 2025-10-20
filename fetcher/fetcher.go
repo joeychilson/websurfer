@@ -22,6 +22,13 @@ type Response struct {
 	Body       []byte
 }
 
+// FetchOptions contains optional parameters for fetch requests.
+type FetchOptions struct {
+	// IfModifiedSince sets the If-Modified-Since header for conditional requests.
+	// If the content hasn't changed, the server responds with 304 Not Modified.
+	IfModifiedSince string
+}
+
 // Fetcher fetches webpages using the provided configuration.
 type Fetcher struct {
 	config           config.FetchConfig
@@ -115,6 +122,12 @@ func New(cfg config.FetchConfig) *Fetcher {
 // Fetch retrieves the content at the given URL.
 // It applies URL rewrites, tries alternative formats, and returns the response.
 func (f *Fetcher) Fetch(ctx context.Context, urlStr string) (*Response, error) {
+	return f.FetchWithOptions(ctx, urlStr, nil)
+}
+
+// FetchWithOptions retrieves the content at the given URL with optional fetch options.
+// It applies URL rewrites, tries alternative formats, and returns the response.
+func (f *Fetcher) FetchWithOptions(ctx context.Context, urlStr string, opts *FetchOptions) (*Response, error) {
 	urlStr = f.applyRewrites(urlStr)
 
 	urls := f.buildURLsToTry(urlStr)
@@ -123,7 +136,7 @@ func (f *Fetcher) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	var lastResp *Response
 
 	for _, tryURL := range urls {
-		resp, err := f.fetchURL(ctx, tryURL)
+		resp, err := f.fetchURL(ctx, tryURL, opts)
 		if err != nil {
 			lastErr = err
 			continue
@@ -159,7 +172,7 @@ func (f *Fetcher) GetHTTPClient() *http.Client {
 }
 
 // fetchURL performs the actual HTTP request for a single URL.
-func (f *Fetcher) fetchURL(ctx context.Context, urlStr string) (*Response, error) {
+func (f *Fetcher) fetchURL(ctx context.Context, urlStr string, opts *FetchOptions) (*Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -167,6 +180,10 @@ func (f *Fetcher) fetchURL(ctx context.Context, urlStr string) (*Response, error
 
 	for key, value := range f.config.GetHeaders() {
 		req.Header.Set(key, value)
+	}
+
+	if opts != nil && opts.IfModifiedSince != "" {
+		req.Header.Set("If-Modified-Since", opts.IfModifiedSince)
 	}
 
 	resp, err := f.client.Do(req)

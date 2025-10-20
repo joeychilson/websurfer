@@ -7,15 +7,16 @@ import (
 
 // Entry represents a cached response.
 type Entry struct {
-	URL         string
-	StatusCode  int
-	Headers     map[string][]string
-	Body        []byte
-	Title       string
-	Description string
-	StoredAt    time.Time
-	TTL         time.Duration
-	StaleTime   time.Duration
+	URL          string
+	StatusCode   int
+	Headers      map[string][]string
+	Body         []byte
+	Title        string
+	Description  string
+	LastModified string
+	StoredAt     time.Time
+	TTL          time.Duration
+	StaleTime    time.Duration
 }
 
 // IsFresh returns true if the entry is still within its TTL.

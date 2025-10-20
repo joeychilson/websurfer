@@ -36,6 +36,12 @@ func New(f *fetcher.Fetcher, l *ratelimit.Limiter, cfg config.RetryConfig) *Retr
 // Fetch attempts to fetch the URL with automatic retries on failure.
 // It applies rate limiting, exponential backoff with jitter, and respects Retry-After headers.
 func (r *Retrier) Fetch(ctx context.Context, url string) (*fetcher.Response, error) {
+	return r.FetchWithOptions(ctx, url, nil)
+}
+
+// FetchWithOptions attempts to fetch the URL with optional fetch options and automatic retries on failure.
+// It applies rate limiting, exponential backoff with jitter, and respects Retry-After headers.
+func (r *Retrier) FetchWithOptions(ctx context.Context, url string, opts *fetcher.FetchOptions) (*fetcher.Response, error) {
 	maxRetries := r.config.GetMaxRetries()
 
 	var lastErr error
@@ -44,10 +50,15 @@ func (r *Retrier) Fetch(ctx context.Context, url string) (*fetcher.Response, err
 			return nil, fmt.Errorf("rate limit wait failed: %w", err)
 		}
 
-		resp, err := r.fetcher.Fetch(ctx, url)
+		resp, err := r.fetcher.FetchWithOptions(ctx, url, opts)
 
 		if resp != nil {
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				r.limiter.Release(url)
+				return resp, nil
+			}
+
+			if resp.StatusCode == 304 {
 				r.limiter.Release(url)
 				return resp, nil
 			}
