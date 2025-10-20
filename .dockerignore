@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+README.md
+LICENSE
+
+# Build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/bin
+/dist
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Development
+tmp/
+temp/
+*.log
+
+# Test coverage
+*.cover
+coverage.*
