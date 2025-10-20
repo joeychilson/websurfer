@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -34,12 +35,52 @@ type compiledRewrite struct {
 	replacement string
 }
 
+// ssrfProtectedTransport wraps http.DefaultTransport with SSRF protection.
+type ssrfProtectedTransport struct {
+	base http.RoundTripper
+}
+
+// RoundTrip validates that the destination IP is not private/internal before making the request.
+func (t *ssrfProtectedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	host, _, err := net.SplitHostPort(req.URL.Host)
+	if err != nil {
+		host = req.URL.Host
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() {
+			return nil, fmt.Errorf("requests to private IP addresses are not allowed: %s", host)
+		}
+	} else {
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			return t.base.RoundTrip(req)
+		}
+
+		for _, resolvedIP := range ips {
+			if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() {
+				return nil, fmt.Errorf("url resolves to private IP address: %s -> %s", host, resolvedIP.String())
+			}
+		}
+	}
+
+	return t.base.RoundTrip(req)
+}
+
 // New creates a new Fetcher with the given configuration.
 func New(cfg config.FetchConfig) *Fetcher {
 	maxRedirects := cfg.GetMaxRedirects()
 
+	var transport http.RoundTripper = http.DefaultTransport
+	if cfg.EnableSSRFProtection {
+		transport = &ssrfProtectedTransport{
+			base: http.DefaultTransport,
+		}
+	}
+
 	client := &http.Client{
-		Timeout: cfg.Timeout,
+		Timeout:   cfg.Timeout,
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if maxRedirects == 0 {
 				return http.ErrUseLastResponse
@@ -110,6 +151,11 @@ func (f *Fetcher) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 // SetTimeout updates the client timeout. Useful for testing.
 func (f *Fetcher) SetTimeout(timeout time.Duration) {
 	f.client.Timeout = timeout
+}
+
+// GetHTTPClient returns the underlying HTTP client.
+func (f *Fetcher) GetHTTPClient() *http.Client {
+	return f.client
 }
 
 // fetchURL performs the actual HTTP request for a single URL.

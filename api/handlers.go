@@ -328,9 +328,33 @@ func (h *Handler) fetchSitemapRecursive(ctx context.Context, sitemapURL string, 
 
 	if result.IsSitemapIndex {
 		h.logger.Debug("found nested sitemap index", "url", sitemapURL, "child_count", len(result.ChildMaps))
+
+		// Parallelize child sitemap fetching
+		resultCh := make(chan []string, len(result.ChildMaps))
+		semaphore := make(chan struct{}, 5) // Limit to 5 concurrent fetches
+
 		for _, childURL := range result.ChildMaps {
-			childURLs := h.fetchSitemapRecursive(ctx, childURL, depth+1, maxDepth)
-			pageURLs = append(pageURLs, childURLs...)
+			go func(url string) {
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+
+				childURLs := h.fetchSitemapRecursive(ctx, url, depth+1, maxDepth)
+				select {
+				case resultCh <- childURLs:
+				case <-ctx.Done():
+				}
+			}(childURL)
+		}
+
+		// Collect results
+		for i := 0; i < len(result.ChildMaps); i++ {
+			select {
+			case urls := <-resultCh:
+				pageURLs = append(pageURLs, urls...)
+			case <-ctx.Done():
+				h.logger.Warn("sitemap index fetch interrupted", "url", sitemapURL, "received", i, "total", len(result.ChildMaps))
+				return pageURLs
+			}
 		}
 		return pageURLs
 	}
@@ -473,26 +497,54 @@ func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse
 			allLinks[link] = true
 		}
 
+		type crawlResult struct {
+			pageURL string
+			links   []string
+		}
+
+		resultCh := make(chan crawlResult, len(links))
+		semaphore := make(chan struct{}, 10)
+
+		crawlCount := 0
 		for _, pageURL := range links {
 			if len(allLinks) >= maxURLs {
 				h.logger.Info("reached max_urls, stopping crawl early", "urls_found", len(allLinks))
 				break
 			}
 
-			pageCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			pageFetched, err := h.client.Fetch(pageCtx, pageURL)
-			cancel()
+			crawlCount++
+			go func(url string) {
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
 
-			if err == nil && pageFetched.StatusCode == 200 {
-				pageLinks, err := html.ExtractLinks(string(pageFetched.Body), pageURL)
-				if err == nil {
-					for _, link := range pageLinks {
-						allLinks[link] = true
-						if len(allLinks) >= maxURLs {
-							break
+				pageCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+
+				pageFetched, err := h.client.Fetch(pageCtx, url)
+				if err == nil && pageFetched.StatusCode == 200 {
+					pageLinks, err := html.ExtractLinks(string(pageFetched.Body), url)
+					if err == nil {
+						select {
+						case resultCh <- crawlResult{pageURL: url, links: pageLinks}:
+						case <-ctx.Done():
 						}
 					}
 				}
+			}(pageURL)
+		}
+
+	crawlLoop:
+		for i := 0; i < crawlCount; i++ {
+			select {
+			case result := <-resultCh:
+				for _, link := range result.links {
+					if len(allLinks) < maxURLs {
+						allLinks[link] = true
+					}
+				}
+			case <-ctx.Done():
+				h.logger.Info("crawl interrupted by context", "received", i, "expected", crawlCount)
+				break crawlLoop
 			}
 		}
 
@@ -503,12 +555,7 @@ func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse
 		h.logger.Info("crawl complete", "total_urls", len(links))
 	}
 
-	sameDomain := true
 	if req.SameDomain {
-		sameDomain = true
-	}
-
-	if sameDomain {
 		baseURL, _ := url.Parse(req.URL)
 		filtered := make([]string, 0, len(links))
 		for _, link := range links {
@@ -561,14 +608,22 @@ func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse
 				h.logger.Debug("failed to fetch metadata for link", "url", url, "error", err)
 			}
 
-			resultCh <- result{index: idx, page: page}
+			select {
+			case resultCh <- result{index: idx, page: page}:
+			case <-ctx.Done():
+				return
+			}
 		}(i, link)
 	}
 
 	pages := make([]PageInfo, len(links))
 	for i := 0; i < len(links); i++ {
-		res := <-resultCh
-		pages[res.index] = res.page
+		select {
+		case res := <-resultCh:
+			pages[res.index] = res.page
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	return &MapResponse{
@@ -669,34 +724,47 @@ func (h *Handler) sendError(w http.ResponseWriter, message string, statusCode in
 func hasNoIndex(body []byte, headers map[string][]string) bool {
 	if xrobots, ok := headers["X-Robots-Tag"]; ok {
 		for _, value := range xrobots {
-			lowerValue := strings.ToLower(value)
-			if strings.Contains(lowerValue, "noindex") {
+			if strings.Contains(strings.ToLower(value), "noindex") {
 				return true
 			}
 		}
 	}
 
-	bodyStr := string(body)
+	searchLimit := len(body)
+	if searchLimit > 8192 {
+		searchLimit = 8192
+		if headEnd := strings.Index(string(body[:searchLimit]), "</head>"); headEnd != -1 {
+			searchLimit = headEnd + 7
+		}
+	}
+
+	bodyStr := string(body[:searchLimit])
 	lowerBody := strings.ToLower(bodyStr)
 
-	if strings.Contains(lowerBody, "<meta") && strings.Contains(lowerBody, "robots") && strings.Contains(lowerBody, "noindex") {
-		if strings.Contains(lowerBody, `name="robots"`) || strings.Contains(lowerBody, `name='robots'`) {
-			metaStart := strings.Index(lowerBody, "<meta")
-			for metaStart != -1 {
-				metaEnd := strings.Index(lowerBody[metaStart:], ">")
-				if metaEnd == -1 {
-					break
-				}
-				metaTag := lowerBody[metaStart : metaStart+metaEnd]
+	if !strings.Contains(lowerBody, "<meta") || !strings.Contains(lowerBody, "robots") {
+		return false
+	}
 
-				if strings.Contains(metaTag, "robots") && strings.Contains(metaTag, "noindex") {
-					return true
-				}
+	if !strings.Contains(lowerBody, "noindex") {
+		return false
+	}
 
-				metaStart = strings.Index(lowerBody[metaStart+metaEnd:], "<meta")
-				if metaStart != -1 {
-					metaStart += metaEnd
-				}
+	if strings.Contains(lowerBody, `name="robots"`) || strings.Contains(lowerBody, `name='robots'`) {
+		metaStart := strings.Index(lowerBody, "<meta")
+		for metaStart != -1 {
+			metaEnd := strings.Index(lowerBody[metaStart:], ">")
+			if metaEnd == -1 {
+				break
+			}
+			metaTag := lowerBody[metaStart : metaStart+metaEnd]
+
+			if strings.Contains(metaTag, "robots") && strings.Contains(metaTag, "noindex") {
+				return true
+			}
+
+			metaStart = strings.Index(lowerBody[metaStart+metaEnd:], "<meta")
+			if metaStart != -1 {
+				metaStart += metaEnd
 			}
 		}
 	}

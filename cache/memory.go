@@ -1,14 +1,22 @@
 package cache
 
 import (
+	"container/list"
 	"context"
 	"sync"
 	"time"
 )
 
-// MemoryCache is an in-memory cache implementation.
+// lruEntry wraps a cache entry with LRU tracking.
+type lruEntry struct {
+	key   string
+	entry *Entry
+}
+
+// MemoryCache is an in-memory cache implementation with LRU eviction.
 type MemoryCache struct {
-	entries map[string]*Entry
+	entries map[string]*list.Element
+	lruList *list.List
 	mu      sync.RWMutex
 	config  Config
 	stopCh  chan struct{}
@@ -26,9 +34,13 @@ func NewMemoryCache(config Config) *MemoryCache {
 	if config.CleanupInterval == 0 {
 		config.CleanupInterval = DefaultConfig().CleanupInterval
 	}
+	if config.MaxEntries == 0 {
+		config.MaxEntries = DefaultConfig().MaxEntries
+	}
 
 	mc := &MemoryCache{
-		entries: make(map[string]*Entry),
+		entries: make(map[string]*list.Element),
+		lruList: list.New(),
 		config:  config,
 		stopCh:  make(chan struct{}),
 		doneCh:  make(chan struct{}),
@@ -42,22 +54,24 @@ func NewMemoryCache(config Config) *MemoryCache {
 // Get retrieves an entry from the cache.
 // Returns nil if the entry doesn't exist or is too old.
 func (mc *MemoryCache) Get(ctx context.Context, url string) (*Entry, error) {
-	mc.mu.RLock()
-	entry, exists := mc.entries[url]
-	mc.mu.RUnlock()
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
 
+	elem, exists := mc.entries[url]
 	if !exists {
 		return nil, nil
 	}
 
-	if entry.IsTooOld() {
-		mc.mu.Lock()
+	lruEnt := elem.Value.(*lruEntry)
+	if lruEnt.entry.IsTooOld() {
+		mc.lruList.Remove(elem)
 		delete(mc.entries, url)
-		mc.mu.Unlock()
 		return nil, nil
 	}
 
-	return entry, nil
+	mc.lruList.MoveToFront(elem)
+
+	return lruEnt.entry, nil
 }
 
 // Set stores an entry in the cache.
@@ -85,7 +99,28 @@ func (mc *MemoryCache) Set(ctx context.Context, entry *Entry) error {
 	}
 	copy(entryCopy.Body, entry.Body)
 
-	mc.entries[entry.URL] = entryCopy
+	if elem, exists := mc.entries[entry.URL]; exists {
+		lruEnt := elem.Value.(*lruEntry)
+		lruEnt.entry = entryCopy
+		mc.lruList.MoveToFront(elem)
+	} else {
+		if mc.config.MaxEntries > 0 && mc.lruList.Len() >= mc.config.MaxEntries {
+			oldest := mc.lruList.Back()
+			if oldest != nil {
+				lruEnt := oldest.Value.(*lruEntry)
+				delete(mc.entries, lruEnt.key)
+				mc.lruList.Remove(oldest)
+			}
+		}
+
+		lruEnt := &lruEntry{
+			key:   entry.URL,
+			entry: entryCopy,
+		}
+		elem := mc.lruList.PushFront(lruEnt)
+		mc.entries[entry.URL] = elem
+	}
+
 	return nil
 }
 
@@ -94,7 +129,10 @@ func (mc *MemoryCache) Delete(ctx context.Context, url string) error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	delete(mc.entries, url)
+	if elem, exists := mc.entries[url]; exists {
+		mc.lruList.Remove(elem)
+		delete(mc.entries, url)
+	}
 	return nil
 }
 
@@ -103,7 +141,8 @@ func (mc *MemoryCache) Clear(ctx context.Context) error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	mc.entries = make(map[string]*Entry)
+	mc.entries = make(map[string]*list.Element)
+	mc.lruList = list.New()
 	return nil
 }
 
@@ -135,10 +174,18 @@ func (mc *MemoryCache) removeExpired() {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	for url, entry := range mc.entries {
-		if entry.IsTooOld() {
-			delete(mc.entries, url)
+	var toRemove []*list.Element
+	for elem := mc.lruList.Front(); elem != nil; elem = elem.Next() {
+		lruEnt := elem.Value.(*lruEntry)
+		if lruEnt.entry.IsTooOld() {
+			toRemove = append(toRemove, elem)
 		}
+	}
+
+	for _, elem := range toRemove {
+		lruEnt := elem.Value.(*lruEntry)
+		delete(mc.entries, lruEnt.key)
+		mc.lruList.Remove(elem)
 	}
 }
 

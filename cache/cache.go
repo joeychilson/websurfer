@@ -57,6 +57,8 @@ type Config struct {
 	StaleTime time.Duration
 	// CleanupInterval is how often to remove expired entries (in-memory only)
 	CleanupInterval time.Duration
+	// MaxEntries is the maximum number of entries to store (0 = unlimited, in-memory only)
+	MaxEntries int
 }
 
 // DefaultConfig returns a cache config with sensible defaults.
@@ -65,5 +67,6 @@ func DefaultConfig() Config {
 		TTL:             5 * time.Minute,
 		StaleTime:       1 * time.Hour,
 		CleanupInterval: 10 * time.Minute,
+		MaxEntries:      1000,
 	}
 }

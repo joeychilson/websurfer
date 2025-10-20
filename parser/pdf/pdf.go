@@ -33,9 +33,9 @@ func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
 
 	if _, err := tmpFile.Write(content); err != nil {
+		tmpFile.Close()
 		return nil, fmt.Errorf("failed to write PDF to temp file: %w", err)
 	}
 

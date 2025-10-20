@@ -28,15 +28,22 @@ func DefaultRateLimitConfig() RateLimitConfig {
 	}
 }
 
-// RateLimit returns a middleware that rate limits requests per IP address.
+// RateLimiter wraps the rate limiting middleware with a cleanup function.
+type RateLimiter struct {
+	Handler     func(next http.Handler) http.Handler
+	redisClient *redis.Client
+}
+
+// RateLimit returns a rate limiter middleware that rate limits requests per IP address.
 // If RedisURL is provided, uses Redis-backed storage for distributed rate limiting.
 // Otherwise, uses in-memory storage (suitable for single-instance deployments).
-func RateLimit(config RateLimitConfig) (func(next http.Handler) http.Handler, error) {
+func RateLimit(config RateLimitConfig) (*RateLimiter, error) {
 	if config.RequestLimit == 0 {
 		config = DefaultRateLimitConfig()
 	}
 
 	var rateLimiter *httprate.RateLimiter
+	var redisClient *redis.Client
 
 	if config.RedisURL != "" {
 		opts, err := redis.ParseURL(config.RedisURL)
@@ -44,10 +51,10 @@ func RateLimit(config RateLimitConfig) (func(next http.Handler) http.Handler, er
 			return nil, err
 		}
 
-		client := redis.NewClient(opts)
+		redisClient = redis.NewClient(opts)
 
 		redisConfig := &httprateredis.Config{
-			Client:    client,
+			Client:    redisClient,
 			PrefixKey: "plainhtml:ratelimit",
 		}
 
@@ -75,5 +82,16 @@ func RateLimit(config RateLimitConfig) (func(next http.Handler) http.Handler, er
 		)
 	}
 
-	return rateLimiter.Handler, nil
+	return &RateLimiter{
+		Handler:     rateLimiter.Handler,
+		redisClient: redisClient,
+	}, nil
+}
+
+// Close releases resources held by the rate limiter (e.g., Redis connection).
+func (rl *RateLimiter) Close() error {
+	if rl.redisClient != nil {
+		return rl.redisClient.Close()
+	}
+	return nil
 }

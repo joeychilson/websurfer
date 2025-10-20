@@ -63,15 +63,14 @@ func (r *Retrier) Fetch(ctx context.Context, url string) (*fetcher.Response, err
 			lastErr = fmt.Errorf("attempt %d failed: %w", attempt, err)
 		}
 
+		r.limiter.Release(url)
+
 		if attempt < maxRetries {
 			backoff := r.calculateBackoff(attempt)
 			if sleepErr := r.sleep(ctx, backoff); sleepErr != nil {
-				r.limiter.Release(url)
 				return nil, sleepErr
 			}
 		}
-
-		r.limiter.Release(url)
 	}
 
 	if lastErr != nil {

@@ -14,6 +14,11 @@ import (
 	"github.com/joeychilson/websurfer/config"
 )
 
+// newTestClient creates a client for testing (SSRF protection disabled by default)
+func newTestClient() (*Client, error) {
+	return New(nil)
+}
+
 func TestClient_Fetch(t *testing.T) {
 	t.Run("successful fetch", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +31,7 @@ func TestClient_Fetch(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, err := New(nil)
+		client, err := newTestClient()
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -312,7 +317,7 @@ Crawl-delay: 2
 		}))
 		defer server.Close()
 
-		client, err := New(nil)
+		client, err := newTestClient()
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -370,7 +375,7 @@ Crawl-delay: 2
 		}))
 		defer server.Close()
 
-		client, err := New(nil)
+		client, err := newTestClient()
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -473,7 +478,7 @@ func TestClient_WithCache(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, err := New(nil)
+		client, err := newTestClient()
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -525,7 +530,7 @@ func TestClient_WithCache(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, err := New(nil)
+		client, err := newTestClient()
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -581,7 +586,7 @@ func TestClient_WithCache(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, err := New(nil)
+		client, err := newTestClient()
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -622,7 +627,7 @@ func TestClient_WithCache(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, err := New(nil)
+		client, err := newTestClient()
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -675,7 +680,7 @@ func TestClient_WithCache(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, err := New(nil)
+		client, err := newTestClient()
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}

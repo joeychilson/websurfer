@@ -15,7 +15,7 @@ import (
 const (
 	// DefaultUserAgent is the default User-Agent header used when none is specified.
 	// Format follows best practices: tool name/version, description, and contact URL.
-	DefaultUserAgent = "plainhtml/1.0 (webpage retriever; +https://github.com/joeychilson/websurfer)"
+	DefaultUserAgent = "websurfer/1.0 (webpage retriever; +https://github.com/joeychilson/websurfer)"
 )
 
 // Config represents the top-level configuration structure for the webpage retriever.
@@ -134,6 +134,10 @@ type FetchConfig struct {
 	FollowRedirects bool `yaml:"follow_redirects,omitempty"`
 	// MaxRedirects is the maximum number of redirects to follow (default: 10, 0 disables).
 	MaxRedirects int `yaml:"max_redirects,omitempty"`
+	// EnableSSRFProtection enables SSRF protection checks (default: false).
+	// When true, requests to private/loopback IPs are blocked.
+	// Set to true in production for security.
+	EnableSSRFProtection bool `yaml:"enable_ssrf_protection,omitempty"`
 }
 
 // GetHeaders returns the headers to use for a request
@@ -579,6 +583,10 @@ func mergeFetch(base, override FetchConfig) FetchConfig {
 	result.FollowRedirects = override.FollowRedirects
 	if override.MaxRedirects > 0 {
 		result.MaxRedirects = override.MaxRedirects
+	}
+
+	if override.EnableSSRFProtection {
+		result.EnableSSRFProtection = true
 	}
 
 	return result

@@ -84,9 +84,12 @@ func New(cfg *config.Config) (*Client, error) {
 	parserRegistry.Register([]string{"text/html", "application/xhtml+xml"}, htmlParser)
 	parserRegistry.Register([]string{"application/pdf"}, pdfParser)
 
+	f := fetcher.New(cfg.Default.Fetch)
+	robotsClient := f.GetHTTPClient()
+
 	return &Client{
 		config:         cfg,
-		robotsChecker:  robots.New(userAgent, robotsCacheTTL, defaultCache, nil),
+		robotsChecker:  robots.New(userAgent, robotsCacheTTL, defaultCache, robotsClient),
 		limiter:        limiter,
 		parser:         parserRegistry,
 		cache:          defaultCache,
@@ -150,7 +153,12 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 				c.logger.Debug("cache hit (stale, refreshing in background)", "url", urlStr)
 				if _, loaded := c.refreshing.LoadOrStore(urlStr, struct{}{}); !loaded {
 					go func() {
-						defer c.refreshing.Delete(urlStr)
+						defer func() {
+							c.refreshing.Delete(urlStr)
+							if r := recover(); r != nil {
+								c.logger.Error("background refresh panicked", "url", urlStr, "panic", r)
+							}
+						}()
 						c.logger.Debug("background refresh started", "url", urlStr)
 
 						refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

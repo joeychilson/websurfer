@@ -25,9 +25,10 @@ type ServerConfig struct {
 
 // Server is the HTTP server for the API.
 type Server struct {
-	handler *Handler
-	logger  logger.Logger
-	router  *chi.Mux
+	handler     *Handler
+	logger      logger.Logger
+	router      *chi.Mux
+	rateLimiter *middleware.RateLimiter
 }
 
 // NewServer creates a new API server with chi router and middleware stack.
@@ -65,16 +66,17 @@ func NewServer(c *client.Client, log logger.Logger, cfg *ServerConfig) (*Server,
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
 	}
-	r.Use(rateLimiter)
+	r.Use(rateLimiter.Handler)
 
 	r.Post("/fetch", handler.HandleFetch)
 	r.Post("/map", handler.HandleMap)
 	r.Get("/health", handler.HandleHealth)
 
 	s := &Server{
-		handler: handler,
-		logger:  log,
-		router:  r,
+		handler:     handler,
+		logger:      log,
+		router:      r,
+		rateLimiter: rateLimiter,
 	}
 
 	return s, nil
@@ -118,4 +120,12 @@ func (s *Server) StartWithShutdown(ctx context.Context, addr string) error {
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
+}
+
+// Close releases resources held by the server (e.g., Redis connections).
+func (s *Server) Close() error {
+	if s.rateLimiter != nil {
+		return s.rateLimiter.Close()
+	}
+	return nil
 }

@@ -18,6 +18,7 @@ type Limiter struct {
 	config   config.RateLimitConfig
 	mu       sync.RWMutex
 	limiters map[string]*domainLimiter
+	stopCh   chan struct{}
 }
 
 // domainLimiter holds rate limiting state for a single domain.
@@ -25,15 +26,19 @@ type domainLimiter struct {
 	limiter    *rate.Limiter
 	semaphore  chan struct{}
 	retryAfter time.Time
+	lastAccess time.Time
 	mu         sync.RWMutex
 }
 
 // New creates a new rate limiter with the given configuration.
 func New(cfg config.RateLimitConfig) *Limiter {
-	return &Limiter{
+	l := &Limiter{
 		config:   cfg,
 		limiters: make(map[string]*domainLimiter),
+		stopCh:   make(chan struct{}),
 	}
+	go l.cleanupInactiveDomains()
+	return l
 }
 
 // Wait blocks until the rate limit allows a request to the given URL.
@@ -121,9 +126,16 @@ func (l *Limiter) getLimiterForDomain(domain string) *domainLimiter {
 	return dl
 }
 
+// Close stops the cleanup goroutine.
+func (l *Limiter) Close() {
+	close(l.stopCh)
+}
+
 // newDomainLimiter creates a new domain-specific limiter.
 func newDomainLimiter(cfg config.RateLimitConfig) *domainLimiter {
-	dl := &domainLimiter{}
+	dl := &domainLimiter{
+		lastAccess: time.Now(),
+	}
 
 	delay := cfg.GetDelay()
 	if delay > 0 {
@@ -145,9 +157,10 @@ func newDomainLimiter(cfg config.RateLimitConfig) *domainLimiter {
 
 // wait blocks until rate limiting allows the request.
 func (dl *domainLimiter) wait(ctx context.Context) error {
-	dl.mu.RLock()
+	dl.mu.Lock()
+	dl.lastAccess = time.Now()
 	retryAfter := dl.retryAfter
-	dl.mu.RUnlock()
+	dl.mu.Unlock()
 
 	if !retryAfter.IsZero() && time.Now().Before(retryAfter) {
 		waitDuration := time.Until(retryAfter)
@@ -224,4 +237,30 @@ func parseRetryAfter(value string) time.Time {
 	}
 
 	return time.Time{}
+}
+
+// cleanupInactiveDomains periodically removes limiters for domains that haven't been accessed recently.
+func (l *Limiter) cleanupInactiveDomains() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			l.mu.Lock()
+			now := time.Now()
+			for domain, dl := range l.limiters {
+				dl.mu.RLock()
+				inactive := now.Sub(dl.lastAccess) > 30*time.Minute
+				dl.mu.RUnlock()
+
+				if inactive {
+					delete(l.limiters, domain)
+				}
+			}
+			l.mu.Unlock()
+		case <-l.stopCh:
+			return
+		}
+	}
 }
