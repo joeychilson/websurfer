@@ -24,10 +24,48 @@ default:
     max_retries: 3
     initial_delay: 1s
     max_delay: 30s
+  # Chunking configuration for search indexing
+  chunk:
+    tokens: 600
+    overlap: 75
 
 sites:
-  # SEC.gov EDGAR - https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data
+  # Wikipedia - Crawl for search indexing
+  - pattern: "en.wikipedia.org"
+    crawl:
+      strategy: "sitemap"
+      # No max_pages or max_depth - crawl everything from sitemap
+    cache:
+      ttl: 12h
+      stale_time: 168h
+    fetch:
+      user_agent: "websurfer/1.0 contact@websurfer.dev"
+      timeout: 45s
+    rate_limit:
+      requests_per_second: 5.0
+      burst: 10
+
+  # Python Documentation - Crawl with custom chunking
+  - pattern: "docs.python.org"
+    crawl:
+      strategy: "both"  # Use both sitemap and link crawling
+      max_pages: 5000
+      max_depth: 3
+    chunk:
+      tokens: 800  # Larger chunks for technical docs
+      overlap: 100
+    cache:
+      ttl: 24h
+      stale_time: 72h
+    fetch:
+      check_formats:
+        - "/llms.txt"
+        - ".md"
+
+  # SEC.gov EDGAR - Fetch only, don't crawl/index
+  # https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data
   - pattern: "*.sec.gov"
+    # No crawl config = not indexed for search
     cache:
       ttl: 24h
       stale_time: 168h
@@ -42,12 +80,3 @@ sites:
       max_retries: 5
       initial_delay: 2s
       max_delay: 60s
-  # Documentation sites - check for /llms.txt and .md versions
-  - pattern: "*/docs*"
-    cache:
-      ttl: 12h
-      stale_time: 72h
-    fetch:
-      check_formats:
-        - "/llms.txt"
-        - ".md"
