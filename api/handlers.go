@@ -54,21 +54,13 @@ type MapRequest struct {
 	Depth      int    `json:"depth,omitempty"`
 }
 
-// PageInfo contains information about a discovered page.
-type PageInfo struct {
-	URL         string `json:"url"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	NoIndex     bool   `json:"noindex,omitempty"`
-}
-
 // MapResponse represents the response from a map request.
 type MapResponse struct {
-	BaseURL   string     `json:"base_url"`
-	Source    string     `json:"source"`
-	Pages     []PageInfo `json:"pages"`
-	Count     int        `json:"count"`
-	Truncated bool       `json:"truncated"`
+	BaseURL   string   `json:"base_url"`
+	Source    string   `json:"source"`
+	URLs      []string `json:"urls"`
+	Count     int      `json:"count"`
+	Truncated bool     `json:"truncated"`
 }
 
 // ErrorResponse represents an error.
@@ -578,56 +570,11 @@ func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse
 		truncated = true
 	}
 
-	type result struct {
-		index int
-		page  PageInfo
-	}
-
-	resultCh := make(chan result, len(links))
-	semaphore := make(chan struct{}, 10)
-
-	for i, link := range links {
-		go func(idx int, url string) {
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			page := PageInfo{URL: url}
-
-			pageCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-
-			pageFetched, err := h.client.Fetch(pageCtx, url)
-			if err == nil && pageFetched != nil {
-				page.Title = pageFetched.Title
-				page.Description = pageFetched.Description
-				page.NoIndex = hasNoIndex(pageFetched.Body, pageFetched.Headers)
-			} else {
-				h.logger.Debug("failed to fetch metadata for link", "url", url, "error", err)
-			}
-
-			select {
-			case resultCh <- result{index: idx, page: page}:
-			case <-ctx.Done():
-				return
-			}
-		}(i, link)
-	}
-
-	pages := make([]PageInfo, len(links))
-	for i := 0; i < len(links); i++ {
-		select {
-		case res := <-resultCh:
-			pages[res.index] = res.page
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-
 	return &MapResponse{
 		BaseURL:   req.URL,
 		Source:    source,
-		Pages:     pages,
-		Count:     len(pages),
+		URLs:      links,
+		Count:     len(links),
 		Truncated: truncated,
 	}, nil
 }
@@ -675,59 +622,6 @@ func (h *Handler) sendError(w http.ResponseWriter, message string, statusCode in
 		StatusCode: statusCode,
 	}
 	h.sendJSON(w, errResp, statusCode)
-}
-
-// hasNoIndex checks if a page indicates it should not be indexed.
-// Checks both <meta name="robots" content="noindex"> tags and X-Robots-Tag HTTP headers.
-func hasNoIndex(body []byte, headers map[string][]string) bool {
-	if xrobots, ok := headers["X-Robots-Tag"]; ok {
-		for _, value := range xrobots {
-			if strings.Contains(strings.ToLower(value), "noindex") {
-				return true
-			}
-		}
-	}
-
-	searchLimit := len(body)
-	if searchLimit > 8192 {
-		searchLimit = 8192
-		if headEnd := strings.Index(string(body[:searchLimit]), "</head>"); headEnd != -1 {
-			searchLimit = headEnd + 7
-		}
-	}
-
-	bodyStr := string(body[:searchLimit])
-	lowerBody := strings.ToLower(bodyStr)
-
-	if !strings.Contains(lowerBody, "<meta") || !strings.Contains(lowerBody, "robots") {
-		return false
-	}
-
-	if !strings.Contains(lowerBody, "noindex") {
-		return false
-	}
-
-	if strings.Contains(lowerBody, `name="robots"`) || strings.Contains(lowerBody, `name='robots'`) {
-		metaStart := strings.Index(lowerBody, "<meta")
-		for metaStart != -1 {
-			metaEnd := strings.Index(lowerBody[metaStart:], ">")
-			if metaEnd == -1 {
-				break
-			}
-			metaTag := lowerBody[metaStart : metaStart+metaEnd]
-
-			if strings.Contains(metaTag, "robots") && strings.Contains(metaTag, "noindex") {
-				return true
-			}
-
-			metaStart = strings.Index(lowerBody[metaStart+metaEnd:], "<meta")
-			if metaStart != -1 {
-				metaStart += metaEnd
-			}
-		}
-	}
-
-	return false
 }
 
 // extractLanguage extracts the language code from HTML's lang attribute.
