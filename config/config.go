@@ -46,7 +46,6 @@ type ResolvedConfig struct {
 	Fetch     FetchConfig
 	RateLimit RateLimitConfig
 	Retry     RetryConfig
-	Chunk     ChunkConfig
 }
 
 // GetConfigForURL returns the merged configuration for a given URL
@@ -56,7 +55,6 @@ func (c *Config) GetConfigForURL(url string) ResolvedConfig {
 		Fetch:     c.Default.Fetch,
 		RateLimit: c.Default.RateLimit,
 		Retry:     c.Default.Retry,
-		Chunk:     c.Default.Chunk,
 	}
 	for _, site := range c.Sites {
 		if matchPattern(url, site.Pattern) {
@@ -72,34 +70,19 @@ func (c *Config) GetConfigForURL(url string) ResolvedConfig {
 			if site.Retry != nil {
 				resolved.Retry = mergeRetry(resolved.Retry, *site.Retry)
 			}
-			if site.Chunk != nil {
-				resolved.Chunk = mergeChunk(resolved.Chunk, *site.Chunk)
-			}
 		}
 	}
 	return resolved
 }
 
-// GetCrawlableSites returns all sites that have crawl configuration
-func (c *Config) GetCrawlableSites() []SiteConfig {
-	var sites []SiteConfig
-	for _, site := range c.Sites {
-		if site.IsCrawlable() {
-			sites = append(sites, site)
-		}
-	}
-	return sites
-}
-
 // DefaultConfig contains default settings applied to all sites unless overridden.
 // These settings serve as the baseline configuration for cache behavior, fetching,
-// rate limiting, retry logic, and content chunking.
+// rate limiting, and retry logic.
 type DefaultConfig struct {
 	Cache     CacheConfig     `yaml:"cache"`
 	Fetch     FetchConfig     `yaml:"fetch"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Retry     RetryConfig     `yaml:"retry"`
-	Chunk     ChunkConfig     `yaml:"chunk"`
 }
 
 // CacheConfig defines caching behavior for fetched webpages.
@@ -121,54 +104,6 @@ func (c *CacheConfig) IsStaleWhileRevalidateEnabled() bool {
 	return c.StaleTime > 0
 }
 
-// ChunkConfig defines how content is chunked for embeddings and search indexing.
-type ChunkConfig struct {
-	// Tokens is the target number of tokens per chunk (default: 600).
-	Tokens int `yaml:"tokens,omitempty"`
-	// Overlap is the number of tokens to overlap between chunks (default: 75).
-	Overlap int `yaml:"overlap,omitempty"`
-}
-
-// GetTokens returns the chunk token count with a default of 600
-func (c *ChunkConfig) GetTokens() int {
-	if c.Tokens > 0 {
-		return c.Tokens
-	}
-	return 600
-}
-
-// GetOverlap returns the chunk overlap with a default of 75
-func (c *ChunkConfig) GetOverlap() int {
-	if c.Overlap > 0 {
-		return c.Overlap
-	}
-	return 75
-}
-
-// CrawlConfig defines how to crawl and index a site for search.
-type CrawlConfig struct {
-	// Strategy specifies how to discover URLs: "sitemap", "links", or "both".
-	Strategy string `yaml:"strategy"`
-	// MaxPages is the optional maximum number of pages to crawl (0 = unlimited).
-	MaxPages int `yaml:"max_pages,omitempty"`
-	// MaxDepth is the optional maximum link depth for "links" strategy (0 = unlimited).
-	MaxDepth int `yaml:"max_depth,omitempty"`
-}
-
-// GetStrategy returns the crawl strategy with a default of "sitemap"
-func (c *CrawlConfig) GetStrategy() string {
-	if c.Strategy == "" {
-		return "sitemap"
-	}
-	return c.Strategy
-}
-
-// IsValid returns true if the strategy is valid
-func (c *CrawlConfig) IsValid() bool {
-	strategy := c.GetStrategy()
-	return strategy == "sitemap" || strategy == "links" || strategy == "both"
-}
-
 // FetchConfig defines how to fetch webpages, including HTTP client settings,
 // browser automation, robots.txt compliance, and content format preferences.
 type FetchConfig struct {
@@ -188,8 +123,6 @@ type FetchConfig struct {
 	RespectRobotsTxt bool `yaml:"respect_robots_txt,omitempty"`
 	// RobotsTxtCacheTTL is how long to cache robots.txt (default: 24h).
 	RobotsTxtCacheTTL time.Duration `yaml:"robots_txt_cache_ttl,omitempty"`
-	// SitemapCacheTTL is how long to cache sitemap URLs (default: 1h).
-	SitemapCacheTTL time.Duration `yaml:"sitemap_cache_ttl,omitempty"`
 	// FollowRedirects enables following HTTP redirects (default: true).
 	FollowRedirects bool `yaml:"follow_redirects,omitempty"`
 	// MaxRedirects is the maximum number of redirects to follow (default: 10, 0 disables).
@@ -218,14 +151,6 @@ func (f *FetchConfig) GetRobotsTxtCacheTTL() time.Duration {
 		return f.RobotsTxtCacheTTL
 	}
 	return 24 * time.Hour
-}
-
-// GetSitemapCacheTTL returns the sitemap cache TTL with a default of 1 hour
-func (f *FetchConfig) GetSitemapCacheTTL() time.Duration {
-	if f.SitemapCacheTTL > 0 {
-		return f.SitemapCacheTTL
-	}
-	return time.Hour
 }
 
 // ShouldFollowRedirects returns whether to follow redirects (default: true)
@@ -264,10 +189,6 @@ type URLRewrite struct {
 type SiteConfig struct {
 	// Pattern is the URL pattern to match (supports wildcards).
 	Pattern string `yaml:"pattern"`
-	// Crawl enables crawling and indexing for search (nil = not indexed).
-	Crawl *CrawlConfig `yaml:"crawl,omitempty"`
-	// Chunk overrides default chunking settings for this pattern.
-	Chunk *ChunkConfig `yaml:"chunk,omitempty"`
 	// Cache overrides default cache settings for this pattern.
 	Cache *CacheConfig `yaml:"cache,omitempty"`
 	// Fetch overrides default fetch settings for this pattern.
@@ -276,29 +197,6 @@ type SiteConfig struct {
 	RateLimit *RateLimitConfig `yaml:"rate_limit,omitempty"`
 	// Retry overrides default retry settings for this pattern.
 	Retry *RetryConfig `yaml:"retry,omitempty"`
-}
-
-// IsCrawlable returns true if this site should be crawled for search indexing
-func (s *SiteConfig) IsCrawlable() bool {
-	return s.Crawl != nil
-}
-
-// GetCrawlBaseURL derives the base URL from the pattern for crawling
-func (s *SiteConfig) GetCrawlBaseURL() string {
-	pattern := s.Pattern
-
-	// Remove wildcards
-	pattern = strings.TrimPrefix(pattern, "*.")
-	pattern = strings.TrimPrefix(pattern, "*")
-	pattern = strings.TrimSuffix(pattern, "/*")
-	pattern = strings.TrimSuffix(pattern, "*")
-
-	// Remove path if present
-	if idx := strings.Index(pattern, "/"); idx != -1 {
-		pattern = pattern[:idx]
-	}
-
-	return "https://" + pattern
 }
 
 // RateLimitConfig defines rate limiting behavior to avoid overwhelming servers.
@@ -432,9 +330,6 @@ func (c *Config) Validate() error {
 	if err := c.validateFetch("default", c.Default.Fetch); err != nil {
 		return err
 	}
-	if err := c.validateChunk("default", c.Default.Chunk); err != nil {
-		return err
-	}
 
 	for i, site := range c.Sites {
 		if site.Pattern == "" {
@@ -455,16 +350,6 @@ func (c *Config) Validate() error {
 		}
 		if site.Fetch != nil {
 			if err := c.validateFetch(siteCtx, *site.Fetch); err != nil {
-				return err
-			}
-		}
-		if site.Chunk != nil {
-			if err := c.validateChunk(siteCtx, *site.Chunk); err != nil {
-				return err
-			}
-		}
-		if site.Crawl != nil {
-			if err := c.validateCrawl(siteCtx, *site.Crawl); err != nil {
 				return err
 			}
 		}
@@ -521,10 +406,6 @@ func (c *Config) validateFetch(ctx string, f FetchConfig) error {
 		return fmt.Errorf("%s.fetch: 'robots_txt_cache_ttl' must be >= 0", ctx)
 	}
 
-	if f.SitemapCacheTTL < 0 {
-		return fmt.Errorf("%s.fetch: 'sitemap_cache_ttl' must be >= 0", ctx)
-	}
-
 	if f.MaxRedirects < 0 {
 		return fmt.Errorf("%s.fetch: 'max_redirects' must be >= 0", ctx)
 	}
@@ -536,48 +417,6 @@ func (c *Config) validateFetch(ctx string, f FetchConfig) error {
 		if rewrite.Type != "" && rewrite.Type != "regex" && rewrite.Type != "literal" {
 			return fmt.Errorf("%s.fetch.url_rewrites[%d]: 'type' must be 'regex' or 'literal'", ctx, i)
 		}
-	}
-
-	return nil
-}
-
-func (c *Config) validateChunk(ctx string, chunk ChunkConfig) error {
-	if chunk.Tokens < 0 {
-		return fmt.Errorf("%s.chunk: 'tokens' must be >= 0", ctx)
-	}
-
-	if chunk.Overlap < 0 {
-		return fmt.Errorf("%s.chunk: 'overlap' must be >= 0", ctx)
-	}
-
-	if chunk.Tokens > 0 && chunk.Overlap > 0 && chunk.Overlap >= chunk.Tokens {
-		return fmt.Errorf("%s.chunk: 'overlap' (%d) must be less than 'tokens' (%d)", ctx, chunk.Overlap, chunk.Tokens)
-	}
-
-	return nil
-}
-
-func (c *Config) validateCrawl(ctx string, crawl CrawlConfig) error {
-	if crawl.Strategy != "" {
-		validStrategies := []string{"sitemap", "links", "both"}
-		valid := false
-		for _, s := range validStrategies {
-			if crawl.Strategy == s {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return fmt.Errorf("%s.crawl: 'strategy' must be one of: sitemap, links, both", ctx)
-		}
-	}
-
-	if crawl.MaxPages < 0 {
-		return fmt.Errorf("%s.crawl: 'max_pages' must be >= 0", ctx)
-	}
-
-	if crawl.MaxDepth < 0 {
-		return fmt.Errorf("%s.crawl: 'max_depth' must be >= 0", ctx)
 	}
 
 	return nil
@@ -737,10 +576,6 @@ func mergeFetch(base, override FetchConfig) FetchConfig {
 		result.RobotsTxtCacheTTL = override.RobotsTxtCacheTTL
 	}
 
-	if override.SitemapCacheTTL > 0 {
-		result.SitemapCacheTTL = override.SitemapCacheTTL
-	}
-
 	result.FollowRedirects = override.FollowRedirects
 	if override.MaxRedirects > 0 {
 		result.MaxRedirects = override.MaxRedirects
@@ -798,20 +633,6 @@ func mergeRetry(base, override RetryConfig) RetryConfig {
 
 	if len(override.RetryOn) > 0 {
 		result.RetryOn = override.RetryOn
-	}
-
-	return result
-}
-
-func mergeChunk(base, override ChunkConfig) ChunkConfig {
-	result := base
-
-	if override.Tokens > 0 {
-		result.Tokens = override.Tokens
-	}
-
-	if override.Overlap > 0 {
-		result.Overlap = override.Overlap
 	}
 
 	return result

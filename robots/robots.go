@@ -25,7 +25,6 @@ type Checker struct {
 type cachedRobots struct {
 	Rules      *Rules        `json:"rules"`
 	CrawlDelay time.Duration `json:"crawl_delay"`
-	Sitemaps   []string      `json:"sitemaps"`
 }
 
 // Rules represents parsed robots.txt rules for a specific user agent.
@@ -111,36 +110,6 @@ func (c *Checker) GetCrawlDelay(ctx context.Context, urlStr string) (time.Durati
 	return 0, nil
 }
 
-// GetSitemaps returns the sitemap URLs declared in robots.txt for a domain.
-func (c *Checker) GetSitemaps(ctx context.Context, urlStr string) ([]string, error) {
-	parsedURL, err := url.Parse(urlStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid url: %w", err)
-	}
-
-	if parsedURL.Host == "" {
-		return nil, fmt.Errorf("url has no host: %s", urlStr)
-	}
-
-	robotsURL := fmt.Sprintf("%s://%s/robots.txt", parsedURL.Scheme, parsedURL.Host)
-	cached, err := c.getCachedRobots(ctx, parsedURL.Host)
-	if err == nil && cached != nil {
-		return cached.Sitemaps, nil
-	}
-
-	_, err = c.getRules(ctx, robotsURL, parsedURL.Host)
-	if err != nil {
-		return nil, nil
-	}
-
-	cached, err = c.getCachedRobots(ctx, parsedURL.Host)
-	if err == nil && cached != nil {
-		return cached.Sitemaps, nil
-	}
-
-	return nil, nil
-}
-
 // getRules retrieves robots.txt rules for a domain, using cache if valid.
 func (c *Checker) getRules(ctx context.Context, robotsURL, host string) (*Rules, error) {
 	cached, err := c.getCachedRobots(ctx, host)
@@ -148,7 +117,7 @@ func (c *Checker) getRules(ctx context.Context, robotsURL, host string) (*Rules,
 		return cached.Rules, nil
 	}
 
-	rules, crawlDelay, sitemaps, err := c.fetchAndParse(ctx, robotsURL)
+	rules, crawlDelay, err := c.fetchAndParse(ctx, robotsURL)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +125,6 @@ func (c *Checker) getRules(ctx context.Context, robotsURL, host string) (*Rules,
 	err = c.setCachedRobots(ctx, host, &cachedRobots{
 		Rules:      rules,
 		CrawlDelay: crawlDelay,
-		Sitemaps:   sitemaps,
 	})
 	if err != nil {
 		return rules, nil
@@ -202,33 +170,33 @@ func (c *Checker) setCachedRobots(ctx context.Context, host string, data *cached
 }
 
 // fetchAndParse fetches and parses robots.txt from the given URL.
-func (c *Checker) fetchAndParse(ctx context.Context, robotsURL string) (*Rules, time.Duration, []string, error) {
+func (c *Checker) fetchAndParse(ctx context.Context, robotsURL string) (*Rules, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, robotsURL, nil)
 	if err != nil {
-		return nil, 0, nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, 0, nil, fmt.Errorf("failed to fetch robots.txt: %w", err)
+		return nil, 0, fmt.Errorf("failed to fetch robots.txt: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, 0, nil, nil
+		return nil, 0, nil
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return nil, 0, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
 	return parseRobotsTxt(resp.Body, c.userAgent)
 }
 
 // parseRobotsTxt parses robots.txt content for a specific user agent.
-func parseRobotsTxt(body interface{ Read([]byte) (int, error) }, userAgent string) (*Rules, time.Duration, []string, error) {
+func parseRobotsTxt(body interface{ Read([]byte) (int, error) }, userAgent string) (*Rules, time.Duration, error) {
 	scanner := bufio.NewScanner(body)
 
 	specificRules := &Rules{
@@ -244,7 +212,6 @@ func parseRobotsTxt(body interface{ Read([]byte) (int, error) }, userAgent strin
 
 	var specificCrawlDelay time.Duration
 	var wildcardCrawlDelay time.Duration
-	var sitemaps []string
 	var currentUserAgent string
 	var matchesSpecific bool
 	var matchesWildcard bool
@@ -306,23 +273,18 @@ func parseRobotsTxt(body interface{ Read([]byte) (int, error) }, userAgent strin
 					wildcardCrawlDelay = seconds
 				}
 			}
-
-		case "sitemap":
-			if value != "" {
-				sitemaps = append(sitemaps, value)
-			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, 0, nil, fmt.Errorf("failed to read robots.txt: %w", err)
+		return nil, 0, fmt.Errorf("failed to read robots.txt: %w", err)
 	}
 
 	if foundSpecificMatch {
-		return specificRules, specificCrawlDelay, sitemaps, nil
+		return specificRules, specificCrawlDelay, nil
 	}
 
-	return wildcardRules, wildcardCrawlDelay, sitemaps, nil
+	return wildcardRules, wildcardCrawlDelay, nil
 }
 
 // isAllowed checks if a path is allowed according to the rules.
