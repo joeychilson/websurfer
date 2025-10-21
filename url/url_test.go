@@ -549,6 +549,115 @@ func TestIsSameSubdomain(t *testing.T) {
 	}
 }
 
+func TestIsSameBaseDomain(t *testing.T) {
+	tests := []struct {
+		name     string
+		url1     string
+		url2     string
+		expected bool
+	}{
+		{
+			name:     "different subdomains same base",
+			url1:     "https://blog.example.com/page",
+			url2:     "https://docs.example.com/doc",
+			expected: true,
+		},
+		{
+			name:     "subdomain and root",
+			url1:     "https://api.github.com/users",
+			url2:     "https://github.com",
+			expected: true,
+		},
+		{
+			name:     "www and subdomain",
+			url1:     "https://www.example.com",
+			url2:     "https://blog.example.com",
+			expected: true,
+		},
+		{
+			name:     "multiple levels same base",
+			url1:     "https://api.v2.example.com",
+			url2:     "https://web.app.example.com",
+			expected: true,
+		},
+		{
+			name:     "completely different domains",
+			url1:     "https://example.com",
+			url2:     "https://other.com",
+			expected: false,
+		},
+		{
+			name:     "similar but different",
+			url1:     "https://example.com",
+			url2:     "https://example.org",
+			expected: false,
+		},
+		{
+			name:     "co.uk same base",
+			url1:     "https://blog.example.co.uk",
+			url2:     "https://www.example.co.uk",
+			expected: true,
+		},
+		{
+			name:     "com.au same base",
+			url1:     "https://shop.example.com.au",
+			url2:     "https://example.com.au",
+			expected: true,
+		},
+		{
+			name:     "gov.uk different",
+			url1:     "https://example.gov.uk",
+			url2:     "https://other.gov.uk",
+			expected: false,
+		},
+		{
+			name:     "same exact URL",
+			url1:     "https://example.com/page",
+			url2:     "https://example.com/other",
+			expected: true,
+		},
+		{
+			name:     "localhost",
+			url1:     "http://localhost:8080",
+			url2:     "http://localhost:3000",
+			expected: true,
+		},
+		{
+			name:     "IP addresses same",
+			url1:     "http://192.168.1.1",
+			url2:     "http://192.168.1.1:8080",
+			expected: true,
+		},
+		{
+			name:     "IP addresses different",
+			url1:     "http://192.168.1.1",
+			url2:     "http://192.168.1.2",
+			expected: false,
+		},
+		{
+			name:     "invalid URL 1",
+			url1:     "not-a-url",
+			url2:     "https://example.com",
+			expected: false,
+		},
+		{
+			name:     "invalid URL 2",
+			url1:     "https://example.com",
+			url2:     "invalid",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsSameBaseDomain(tt.url1, tt.url2)
+			if result != tt.expected {
+				t.Errorf("IsSameBaseDomain(%q, %q) = %v, want %v", tt.url1, tt.url2, result, tt.expected)
+			}
+		})
+	}
+}
+
 // Helper function to check if a string contains a substring (case-insensitive)
 func contains(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))

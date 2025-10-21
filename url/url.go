@@ -199,3 +199,67 @@ func IsSameSubdomain(url1, url2 string) bool {
 
 	return parsed1.Hostname() == parsed2.Hostname()
 }
+
+// IsSameBaseDomain checks if two URLs belong to the same base/root domain.
+// This matches all subdomains: blog.example.com and docs.example.com both match example.com.
+// Examples:
+//   - blog.example.com and www.example.com -> true (same base: example.com)
+//   - api.github.com and github.com -> true (same base: github.com)
+//   - example.com and other.com -> false (different bases)
+func IsSameBaseDomain(url1, url2 string) bool {
+	parsed1, err1 := url.Parse(url1)
+	parsed2, err2 := url.Parse(url2)
+
+	if err1 != nil || err2 != nil {
+		return false
+	}
+
+	base1 := extractBaseDomain(parsed1.Hostname())
+	base2 := extractBaseDomain(parsed2.Hostname())
+
+	return base1 != "" && base2 != "" && base1 == base2
+}
+
+// extractBaseDomain extracts the base/root domain from a hostname.
+// Examples: blog.example.com -> example.com, www.github.com -> github.com
+func extractBaseDomain(hostname string) string {
+	if hostname == "" {
+		return ""
+	}
+
+	if net.ParseIP(hostname) != nil {
+		return hostname
+	}
+
+	if hostname == "localhost" {
+		return hostname
+	}
+
+	parts := strings.Split(hostname, ".")
+
+	if len(parts) < 2 {
+		return hostname
+	}
+
+	baseDomain := parts[len(parts)-2] + "." + parts[len(parts)-1]
+
+	if len(parts) >= 3 {
+		tld := parts[len(parts)-1]
+		sld := parts[len(parts)-2]
+
+		multiPartTLDs := map[string]bool{
+			"co":  true, // .co.uk, .co.jp
+			"com": true, // .com.au, .com.br
+			"gov": true, // .gov.uk
+			"ac":  true, // .ac.uk
+			"org": true, // .org.uk
+			"net": true, // .net.au
+		}
+
+		if multiPartTLDs[sld] {
+			baseDomain = parts[len(parts)-3] + "." + sld + "." + tld
+		}
+	}
+
+	return baseDomain
+}

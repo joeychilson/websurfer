@@ -34,6 +34,7 @@ func main() {
 	maxURLs := flag.Int("max-urls", 100, "Maximum URLs to return (map mode only)")
 	pathPrefix := flag.String("path-prefix", "", "Filter URLs by path prefix (map mode only)")
 	sameDomain := flag.Bool("same-domain", false, "Only return URLs from same domain (map mode only)")
+	includeSubdomains := flag.Bool("include-subdomains", false, "Include all subdomains when filtering by domain (map mode only)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS]\n\n", os.Args[0])
@@ -48,6 +49,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "    %s -mode map -url https://example.com\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "    %s -mode map -url https://example.com -max-urls 50\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "    %s -mode map -url https://example.com -path-prefix /blog\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "    %s -mode map -url https://example.com -same-domain -include-subdomains\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "    %s -mode map -url https://example.com -path-prefix /docs -max-urls 200\n", os.Args[0])
 	}
 
@@ -66,7 +68,7 @@ func main() {
 	case "fetch":
 		result, err = benchmarkFetch(*serverURL, *url)
 	case "map":
-		result, err = benchmarkMap(*serverURL, *url, *maxURLs, *pathPrefix, *sameDomain)
+		result, err = benchmarkMap(*serverURL, *url, *maxURLs, *pathPrefix, *sameDomain, *includeSubdomains)
 	default:
 		fmt.Fprintf(os.Stderr, "Error: invalid mode '%s'. Must be 'fetch' or 'map'\n\n", *mode)
 		flag.Usage()
@@ -128,12 +130,13 @@ func benchmarkFetch(serverURL, targetURL string) (*BenchmarkResult, error) {
 	}, nil
 }
 
-func benchmarkMap(serverURL, targetURL string, maxURLs int, pathPrefix string, sameDomain bool) (*BenchmarkResult, error) {
+func benchmarkMap(serverURL, targetURL string, maxURLs int, pathPrefix string, sameDomain, includeSubdomains bool) (*BenchmarkResult, error) {
 	reqBody := api.MapRequest{
-		URL:        targetURL,
-		MaxURLs:    maxURLs,
-		PathPrefix: pathPrefix,
-		SameDomain: sameDomain,
+		URL:               targetURL,
+		MaxURLs:           maxURLs,
+		PathPrefix:        pathPrefix,
+		SameDomain:        sameDomain,
+		IncludeSubdomains: includeSubdomains,
 	}
 
 	jsonData, err := json.Marshal(reqBody)

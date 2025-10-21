@@ -47,11 +47,12 @@ type FetchResponse struct {
 
 // MapRequest represents a request to map/discover URLs from a website.
 type MapRequest struct {
-	URL        string `json:"url"`
-	MaxURLs    int    `json:"max_urls,omitempty"`
-	SameDomain bool   `json:"same_domain,omitempty"`
-	Depth      int    `json:"depth,omitempty"`
-	PathPrefix string `json:"path_prefix,omitempty"`
+	URL               string `json:"url"`
+	MaxURLs           int    `json:"max_urls,omitempty"`
+	SameDomain        bool   `json:"same_domain,omitempty"`
+	IncludeSubdomains bool   `json:"include_subdomains,omitempty"`
+	Depth             int    `json:"depth,omitempty"`
+	PathPrefix        string `json:"path_prefix,omitempty"`
 }
 
 // MapResponse represents the response from a map request.
@@ -418,11 +419,20 @@ func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse
 	if req.SameDomain {
 		filtered := make([]string, 0, len(links))
 		for _, link := range links {
-			if urlpkg.IsSameDomain(req.URL, link) {
+			var matches bool
+			if req.IncludeSubdomains {
+				// Include all subdomains (e.g., blog.example.com matches example.com)
+				matches = urlpkg.IsSameBaseDomain(req.URL, link)
+			} else {
+				// Exact domain match only (ignoring www)
+				matches = urlpkg.IsSameDomain(req.URL, link)
+			}
+			if matches {
 				filtered = append(filtered, link)
 			}
 		}
 		links = filtered
+		h.logger.Debug("filtered by domain", "same_domain", req.SameDomain, "include_subdomains", req.IncludeSubdomains, "count", len(links))
 	}
 
 	links = urlpkg.Deduplicate(links)
