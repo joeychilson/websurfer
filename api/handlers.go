@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -16,6 +15,7 @@ import (
 	"github.com/joeychilson/websurfer/logger"
 	"github.com/joeychilson/websurfer/parser/html"
 	"github.com/joeychilson/websurfer/parser/sitemap"
+	urlpkg "github.com/joeychilson/websurfer/url"
 )
 
 // FetchRequest represents a request to fetch and process a URL.
@@ -552,16 +552,17 @@ func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse
 	}
 
 	if req.SameDomain {
-		baseURL, _ := url.Parse(req.URL)
 		filtered := make([]string, 0, len(links))
 		for _, link := range links {
-			linkURL, err := url.Parse(link)
-			if err == nil && linkURL.Host == baseURL.Host {
+			if urlpkg.IsSameDomain(req.URL, link) {
 				filtered = append(filtered, link)
 			}
 		}
 		links = filtered
 	}
+
+	links = urlpkg.Deduplicate(links)
+	h.logger.Debug("deduplicated URLs", "count", len(links))
 
 	maxURLs := req.MaxURLs
 	if maxURLs == 0 {
@@ -649,57 +650,10 @@ func (h *Handler) validateMapRequest(req *MapRequest) error {
 }
 
 func (h *Handler) parseAndValidateExternalURL(raw string) (*url.URL, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, fmt.Errorf("url cannot be empty")
-	}
-
-	parsedURL, err := url.ParseRequestURI(raw)
-	if err != nil {
-		return nil, fmt.Errorf("invalid url: %w", err)
-	}
-
-	if parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return nil, fmt.Errorf("url must be absolute with scheme (http/https) and host")
-	}
-
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return nil, fmt.Errorf("url scheme must be http or https")
-	}
-
-	if err := h.validateNotInternalURL(parsedURL); err != nil {
+	if err := urlpkg.ValidateExternal(raw); err != nil {
 		return nil, err
 	}
-
-	return parsedURL, nil
-}
-
-// validateNotInternalURL prevents SSRF attacks by blocking private/internal IP addresses.
-func (h *Handler) validateNotInternalURL(u *url.URL) error {
-	host, _, err := net.SplitHostPort(u.Host)
-	if err != nil {
-		host = u.Host
-	}
-
-	ip := net.ParseIP(host)
-	if ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() {
-			return fmt.Errorf("requests to private IP addresses are not allowed")
-		}
-		return nil
-	}
-
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return nil
-	}
-
-	for _, resolvedIP := range ips {
-		if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() {
-			return fmt.Errorf("url resolves to private IP address: %s", host)
-		}
-	}
-
-	return nil
+	return urlpkg.ParseAndValidate(raw)
 }
 
 // sendJSON sends a JSON response.
