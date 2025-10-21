@@ -123,6 +123,8 @@ type FetchConfig struct {
 	RespectRobotsTxt bool `yaml:"respect_robots_txt,omitempty"`
 	// RobotsTxtCacheTTL is how long to cache robots.txt (default: 24h).
 	RobotsTxtCacheTTL time.Duration `yaml:"robots_txt_cache_ttl,omitempty"`
+	// SitemapCacheTTL is how long to cache sitemap URLs (default: 1h).
+	SitemapCacheTTL time.Duration `yaml:"sitemap_cache_ttl,omitempty"`
 	// FollowRedirects enables following HTTP redirects (default: true).
 	FollowRedirects bool `yaml:"follow_redirects,omitempty"`
 	// MaxRedirects is the maximum number of redirects to follow (default: 10, 0 disables).
@@ -151,6 +153,14 @@ func (f *FetchConfig) GetRobotsTxtCacheTTL() time.Duration {
 		return f.RobotsTxtCacheTTL
 	}
 	return 24 * time.Hour
+}
+
+// GetSitemapCacheTTL returns the sitemap cache TTL with a default of 1 hour
+func (f *FetchConfig) GetSitemapCacheTTL() time.Duration {
+	if f.SitemapCacheTTL > 0 {
+		return f.SitemapCacheTTL
+	}
+	return time.Hour
 }
 
 // ShouldFollowRedirects returns whether to follow redirects (default: true)
@@ -406,6 +416,10 @@ func (c *Config) validateFetch(ctx string, f FetchConfig) error {
 		return fmt.Errorf("%s.fetch: 'robots_txt_cache_ttl' must be >= 0", ctx)
 	}
 
+	if f.SitemapCacheTTL < 0 {
+		return fmt.Errorf("%s.fetch: 'sitemap_cache_ttl' must be >= 0", ctx)
+	}
+
 	if f.MaxRedirects < 0 {
 		return fmt.Errorf("%s.fetch: 'max_redirects' must be >= 0", ctx)
 	}
@@ -574,6 +588,10 @@ func mergeFetch(base, override FetchConfig) FetchConfig {
 	result.RespectRobotsTxt = override.RespectRobotsTxt
 	if override.RobotsTxtCacheTTL > 0 {
 		result.RobotsTxtCacheTTL = override.RobotsTxtCacheTTL
+	}
+
+	if override.SitemapCacheTTL > 0 {
+		result.SitemapCacheTTL = override.SitemapCacheTTL
 	}
 
 	result.FollowRedirects = override.FollowRedirects

@@ -14,7 +14,6 @@ import (
 	"github.com/joeychilson/websurfer/content"
 	"github.com/joeychilson/websurfer/logger"
 	"github.com/joeychilson/websurfer/parser/html"
-	"github.com/joeychilson/websurfer/parser/sitemap"
 	urlpkg "github.com/joeychilson/websurfer/url"
 )
 
@@ -283,86 +282,6 @@ func (h *Handler) validateRequest(req *FetchRequest) error {
 	return nil
 }
 
-// fetchSitemapRecursive recursively fetches a sitemap and all child sitemaps it references.
-// depth is the current recursion depth, maxDepth is the maximum allowed depth.
-func (h *Handler) fetchSitemapRecursive(ctx context.Context, sitemapURL string, depth int, maxDepth int) []string {
-	if depth >= maxDepth {
-		h.logger.Warn("max sitemap recursion depth reached", "url", sitemapURL, "depth", depth)
-		return nil
-	}
-
-	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	fetched, err := h.client.Fetch(fetchCtx, sitemapURL)
-	if err != nil {
-		h.logger.Debug("failed to fetch sitemap", "url", sitemapURL, "error", err)
-		return nil
-	}
-
-	if fetched.StatusCode != 200 {
-		h.logger.Debug("sitemap returned non-200 status", "url", sitemapURL, "status", fetched.StatusCode)
-		return nil
-	}
-
-	result, err := sitemap.Parse(fetched.Body)
-	if err != nil {
-		h.logger.Debug("failed to parse sitemap", "url", sitemapURL, "error", err)
-		return nil
-	}
-
-	if result == nil {
-		return nil
-	}
-
-	pageURLs := make([]string, 0)
-
-	if result.IsSitemapIndex {
-		h.logger.Debug("found nested sitemap index", "url", sitemapURL, "child_count", len(result.ChildMaps))
-
-		resultCh := make(chan []string, len(result.ChildMaps))
-		semaphore := make(chan struct{}, 5)
-
-		for _, childURL := range result.ChildMaps {
-			go func(url string) {
-				semaphore <- struct{}{}
-				defer func() { <-semaphore }()
-
-				childURLs := h.fetchSitemapRecursive(ctx, url, depth+1, maxDepth)
-				select {
-				case resultCh <- childURLs:
-				case <-ctx.Done():
-				}
-			}(childURL)
-		}
-
-		for i := 0; i < len(result.ChildMaps); i++ {
-			select {
-			case urls := <-resultCh:
-				pageURLs = append(pageURLs, urls...)
-			case <-ctx.Done():
-				h.logger.Warn("sitemap index fetch interrupted", "url", sitemapURL, "received", i, "total", len(result.ChildMaps))
-				return pageURLs
-			}
-		}
-		return pageURLs
-	}
-
-	for _, u := range result.URLs {
-		if sitemap.IsSitemapURL(u) {
-			normalized := sitemap.NormalizeSitemapURL(u)
-			h.logger.Debug("found nested child sitemap", "url", u, "normalized", normalized, "depth", depth)
-			childURLs := h.fetchSitemapRecursive(ctx, normalized, depth+1, maxDepth)
-			pageURLs = append(pageURLs, childURLs...)
-		} else {
-			pageURLs = append(pageURLs, u)
-		}
-	}
-
-	h.logger.Debug("fetched sitemap", "url", sitemapURL, "page_urls", len(pageURLs), "depth", depth)
-	return pageURLs
-}
-
 // processMap handles the map request processing logic.
 func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse, error) {
 	var links []string
@@ -374,8 +293,10 @@ func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse
 		h.logger.Info("found sitemaps in robots.txt", "count", len(robotsSitemaps), "sitemaps", robotsSitemaps)
 		allURLs := make([]string, 0)
 		for _, sitemapURL := range robotsSitemaps {
-			childURLs := h.fetchSitemapRecursive(ctx, sitemapURL, 0, 3)
-			allURLs = append(allURLs, childURLs...)
+			childURLs, err := h.client.FetchSitemapURLs(ctx, sitemapURL, 3)
+			if err == nil {
+				allURLs = append(allURLs, childURLs...)
+			}
 		}
 		if len(allURLs) > 0 {
 			links = allURLs
@@ -389,61 +310,11 @@ func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse
 		sitemapURL := fmt.Sprintf("%s://%s/sitemap.xml", parsedURL.Scheme, parsedURL.Host)
 
 		h.logger.Debug("attempting to fetch sitemap", "url", sitemapURL)
-		sitemapFetched, err := h.client.Fetch(ctx, sitemapURL)
-
-		if err == nil && sitemapFetched.StatusCode == 200 {
-			contentType := ""
-			if ct, ok := sitemapFetched.Headers["Content-Type"]; ok && len(ct) > 0 {
-				contentType = ct[0]
-			}
-
-			if strings.Contains(strings.ToLower(contentType), "xml") {
-				h.logger.Debug("found sitemap, parsing", "url", sitemapURL)
-				result, err := sitemap.Parse(sitemapFetched.Body)
-				if err == nil && result != nil {
-					if result.IsSitemapIndex {
-						h.logger.Info("found sitemap index, fetching child sitemaps", "count", len(result.ChildMaps))
-						allURLs := make([]string, 0)
-						for _, childURL := range result.ChildMaps {
-							childURLs := h.fetchSitemapRecursive(ctx, childURL, 0, 3)
-							allURLs = append(allURLs, childURLs...)
-						}
-						if len(allURLs) > 0 {
-							links = allURLs
-							source = "sitemap"
-							h.logger.Info("extracted URLs from sitemap index", "total_urls", len(links))
-						}
-					} else if len(result.URLs) > 0 {
-						pageURLs := make([]string, 0)
-						childSitemapURLs := make([]string, 0)
-
-						for _, u := range result.URLs {
-							if sitemap.IsSitemapURL(u) {
-								normalized := sitemap.NormalizeSitemapURL(u)
-								childSitemapURLs = append(childSitemapURLs, normalized)
-								h.logger.Debug("found child sitemap URL in regular sitemap", "url", u, "normalized", normalized)
-							} else {
-								pageURLs = append(pageURLs, u)
-							}
-						}
-
-						if len(childSitemapURLs) > 0 {
-							h.logger.Info("found child sitemap URLs, fetching recursively", "count", len(childSitemapURLs))
-							for _, childURL := range childSitemapURLs {
-								childURLs := h.fetchSitemapRecursive(ctx, childURL, 0, 3)
-								pageURLs = append(pageURLs, childURLs...)
-							}
-							h.logger.Info("fetched all child sitemaps", "total_page_urls", len(pageURLs))
-						}
-
-						if len(pageURLs) > 0 {
-							links = pageURLs
-							source = "sitemap"
-							h.logger.Info("extracted URLs from sitemap", "url", sitemapURL, "count", len(links))
-						}
-					}
-				}
-			}
+		sitemapURLs, err := h.client.FetchSitemapURLs(ctx, sitemapURL, 3)
+		if err == nil && len(sitemapURLs) > 0 {
+			links = sitemapURLs
+			source = "sitemap"
+			h.logger.Info("extracted URLs from sitemap.xml", "url", sitemapURL, "count", len(links))
 		}
 	}
 

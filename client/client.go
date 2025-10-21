@@ -18,6 +18,7 @@ import (
 	htmlparser "github.com/joeychilson/websurfer/parser/html"
 	"github.com/joeychilson/websurfer/parser/pdf"
 	"github.com/joeychilson/websurfer/parser/rules"
+	"github.com/joeychilson/websurfer/parser/sitemap"
 	"github.com/joeychilson/websurfer/ratelimit"
 	"github.com/joeychilson/websurfer/retry"
 	"github.com/joeychilson/websurfer/robots"
@@ -262,6 +263,139 @@ func (c *Client) FetchNoCache(ctx context.Context, urlStr string) (*Response, er
 // Returns an empty slice if robots.txt doesn't exist or doesn't declare sitemaps.
 func (c *Client) GetSitemapsFromRobotsTxt(ctx context.Context, urlStr string) ([]string, error) {
 	return c.robotsChecker.GetSitemaps(ctx, urlStr)
+}
+
+// FetchSitemapURLs fetches and parses a sitemap URL, returning all page URLs.
+// Recursively fetches child sitemaps up to maxDepth levels deep.
+// Results are cached according to the SitemapCacheTTL configuration.
+func (c *Client) FetchSitemapURLs(ctx context.Context, sitemapURL string, maxDepth int) ([]string, error) {
+	return c.fetchSitemapRecursive(ctx, sitemapURL, 0, maxDepth)
+}
+
+// fetchSitemapRecursive recursively fetches a sitemap and all child sitemaps it references.
+// Checks cache first, and stores parsed results in cache for subsequent requests.
+func (c *Client) fetchSitemapRecursive(ctx context.Context, sitemapURL string, depth int, maxDepth int) ([]string, error) {
+	if depth >= maxDepth {
+		c.logger.Warn("max sitemap recursion depth reached", "url", sitemapURL, "depth", depth)
+		return nil, nil
+	}
+
+	cacheKey := "sitemap:" + sitemapURL
+	if cached, err := c.cache.Get(ctx, cacheKey); err == nil && cached != nil {
+		c.logger.Debug("sitemap cache hit", "url", sitemapURL)
+		urls := strings.Split(strings.TrimSpace(string(cached.Body)), "\n")
+		if len(urls) == 1 && urls[0] == "" {
+			return []string{}, nil
+		}
+		return urls, nil
+	}
+
+	c.logger.Debug("sitemap cache miss, fetching", "url", sitemapURL)
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	resp, err := c.Fetch(fetchCtx, sitemapURL)
+	if err != nil {
+		c.logger.Debug("failed to fetch sitemap", "url", sitemapURL, "error", err)
+		return nil, err
+	}
+
+	if resp.StatusCode != 200 {
+		c.logger.Debug("sitemap returned non-200 status", "url", sitemapURL, "status", resp.StatusCode)
+		return nil, fmt.Errorf("sitemap returned status %d", resp.StatusCode)
+	}
+
+	result, err := c.parseSitemap(resp.Body)
+	if err != nil {
+		c.logger.Debug("failed to parse sitemap", "url", sitemapURL, "error", err)
+		return nil, err
+	}
+
+	if result == nil {
+		c.cacheSitemapURLs(ctx, sitemapURL, []string{})
+		return []string{}, nil
+	}
+
+	pageURLs := make([]string, 0)
+
+	if result.IsSitemapIndex {
+		c.logger.Debug("found nested sitemap index", "url", sitemapURL, "child_count", len(result.ChildMaps))
+
+		for _, childURL := range result.ChildMaps {
+			childURLs, err := c.fetchSitemapRecursive(ctx, childURL, depth+1, maxDepth)
+			if err != nil {
+				c.logger.Debug("failed to fetch child sitemap", "url", childURL, "error", err)
+				continue
+			}
+			pageURLs = append(pageURLs, childURLs...)
+		}
+
+		c.cacheSitemapURLs(ctx, sitemapURL, pageURLs)
+		return pageURLs, nil
+	}
+
+	for _, u := range result.URLs {
+		if c.isSitemapURL(u) {
+			normalized := c.normalizeSitemapURL(u)
+			c.logger.Debug("found nested child sitemap", "url", u, "normalized", normalized, "depth", depth)
+			childURLs, err := c.fetchSitemapRecursive(ctx, normalized, depth+1, maxDepth)
+			if err != nil {
+				c.logger.Debug("failed to fetch nested sitemap", "url", normalized, "error", err)
+				continue
+			}
+			pageURLs = append(pageURLs, childURLs...)
+		} else {
+			pageURLs = append(pageURLs, u)
+		}
+	}
+
+	c.logger.Debug("fetched sitemap", "url", sitemapURL, "page_urls", len(pageURLs), "depth", depth)
+	c.cacheSitemapURLs(ctx, sitemapURL, pageURLs)
+	return pageURLs, nil
+}
+
+// parseSitemap parses sitemap XML content and returns URLs or child sitemap references.
+func (c *Client) parseSitemap(content []byte) (*sitemap.ParseResult, error) {
+	return sitemap.Parse(content)
+}
+
+func (c *Client) isSitemapURL(url string) bool {
+	lower := strings.ToLower(url)
+	return strings.Contains(lower, "sitemap")
+}
+
+func (c *Client) normalizeSitemapURL(url string) string {
+	if strings.HasSuffix(strings.ToLower(url), ".xml") {
+		return url
+	}
+	if strings.Contains(strings.ToLower(url), "sitemap") {
+		return url + ".xml"
+	}
+	return url
+}
+
+func (c *Client) cacheSitemapURLs(ctx context.Context, sitemapURL string, urls []string) {
+	cacheKey := "sitemap:" + sitemapURL
+
+	resolvedConfig := c.config.GetConfigForURL(sitemapURL)
+	ttl := resolvedConfig.Fetch.GetSitemapCacheTTL()
+
+	body := []byte(strings.Join(urls, "\n"))
+
+	entry := &cache.Entry{
+		URL:       cacheKey,
+		Body:      body,
+		StoredAt:  time.Now(),
+		TTL:       ttl,
+		StaleTime: 0,
+	}
+
+	if err := c.cache.Set(ctx, entry); err != nil {
+		c.logger.Warn("failed to cache sitemap URLs", "url", sitemapURL, "error", err)
+	} else {
+		c.logger.Debug("cached sitemap URLs", "url", sitemapURL, "count", len(urls), "ttl", ttl)
+	}
 }
 
 // Close releases resources held by the client.

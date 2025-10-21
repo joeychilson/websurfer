@@ -10,6 +10,7 @@ default:
     timeout: 30s
     respect_robots_txt: true
     robots_txt_cache_ttl: 24h
+    sitemap_cache_ttl: 1h
     follow_redirects: true
     enable_ssrf_protection: true
     max_redirects: 10
