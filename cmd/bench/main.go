@@ -9,39 +9,19 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/joeychilson/websurfer/api"
 )
 
 const (
 	defaultServerURL = "http://localhost:8080"
 )
 
-type Metadata struct {
-	URL             string `json:"url"`
-	StatusCode      int    `json:"status_code"`
-	ContentType     string `json:"content_type"`
-	Title           string `json:"title,omitempty"`
-	Description     string `json:"description,omitempty"`
-	CacheState      string `json:"cache_state,omitempty"`
-	CachedAt        string `json:"cached_at,omitempty"`
-	LastModified    string `json:"last_modified,omitempty"`
-	Language        string `json:"language,omitempty"`
-	EstimatedTokens int    `json:"estimated_tokens"`
-}
-
-type FetchResponse struct {
-	Metadata Metadata `json:"metadata"`
-	Content  string   `json:"content"`
-}
-
-type FetchRequest struct {
-	URL string `json:"url"`
-}
-
 type BenchmarkResult struct {
-	Metadata       Metadata      `json:"metadata"`
-	TimeTaken      time.Duration `json:"time_taken_ms"`
-	ContentLength  int           `json:"content_length"`
-	RequestTime    string        `json:"request_time"`
+	Metadata      api.Metadata  `json:"metadata"`
+	TimeTaken     time.Duration `json:"time_taken_ms"`
+	ContentLength int           `json:"content_length"`
+	RequestTime   string        `json:"request_time"`
 }
 
 func main() {
@@ -82,7 +62,7 @@ func main() {
 }
 
 func benchmarkFetch(serverURL, targetURL string) (*BenchmarkResult, error) {
-	reqBody := FetchRequest{
+	reqBody := api.FetchRequest{
 		URL: targetURL,
 	}
 
@@ -111,7 +91,7 @@ func benchmarkFetch(serverURL, targetURL string) (*BenchmarkResult, error) {
 		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var fetchResp FetchResponse
+	var fetchResp api.FetchResponse
 	if err := json.Unmarshal(body, &fetchResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
@@ -126,10 +106,10 @@ func benchmarkFetch(serverURL, targetURL string) (*BenchmarkResult, error) {
 
 func outputJSON(result *BenchmarkResult) {
 	output := map[string]interface{}{
-		"metadata":        result.Metadata,
-		"time_taken_ms":   result.TimeTaken.Milliseconds(),
-		"content_length":  result.ContentLength,
-		"request_time":    result.RequestTime,
+		"metadata":       result.Metadata,
+		"time_taken_ms":  result.TimeTaken.Milliseconds(),
+		"content_length": result.ContentLength,
+		"request_time":   result.RequestTime,
 	}
 
 	jsonData, err := json.MarshalIndent(output, "", "  ")

@@ -6,9 +6,6 @@ import (
 	"github.com/joeychilson/websurfer/parser"
 )
 
-// DefaultMaxTokens is the default maximum tokens to return.
-const DefaultMaxTokens = 20000
-
 const (
 	// htmlBoundaryWindowDivisor determines the search window size for HTML boundaries (1/10 = 10% of target chars).
 	htmlBoundaryWindowDivisor = 10

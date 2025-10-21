@@ -51,7 +51,7 @@ type MapRequest struct {
 	URL        string `json:"url"`
 	MaxURLs    int    `json:"max_urls,omitempty"`
 	SameDomain bool   `json:"same_domain,omitempty"`
-	Depth      int    `json:"depth,omitempty"` // 0=sitemap/homepage only, 1=follow links from sitemap/homepage, 2+=recursive
+	Depth      int    `json:"depth,omitempty"`
 }
 
 // PageInfo contains information about a discovered page.
@@ -59,13 +59,13 @@ type PageInfo struct {
 	URL         string `json:"url"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
-	NoIndex     bool   `json:"noindex,omitempty"` // True if page has meta robots noindex
+	NoIndex     bool   `json:"noindex,omitempty"`
 }
 
 // MapResponse represents the response from a map request.
 type MapResponse struct {
 	BaseURL   string     `json:"base_url"`
-	Source    string     `json:"source"` // "sitemap" or "html_links"
+	Source    string     `json:"source"`
 	Pages     []PageInfo `json:"pages"`
 	Count     int        `json:"count"`
 	Truncated bool       `json:"truncated"`
@@ -176,15 +176,8 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 	}
 
 	bodyText := string(fetched.Body)
-	contentType := ""
-	if ct, ok := fetched.Headers["Content-Type"]; ok && len(ct) > 0 {
-		contentType = ct[0]
-	}
-
-	lastModified := ""
-	if lm, ok := fetched.Headers["Last-Modified"]; ok && len(lm) > 0 {
-		lastModified = lm[0]
-	}
+	contentType := firstHeader(fetched.Headers, "Content-Type")
+	lastModified := firstHeader(fetched.Headers, "Last-Modified")
 
 	language := ""
 	if strings.Contains(strings.ToLower(contentType), "html") {
@@ -203,37 +196,11 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 	if req.MaxTokens > 0 {
 		truncation := content.Truncate(workingText, contentType, req.MaxTokens)
 
-		metadata := Metadata{
-			URL:             fetched.URL,
-			StatusCode:      fetched.StatusCode,
-			ContentType:     contentType,
-			Language:        language,
-			Title:           fetched.Title,
-			Description:     fetched.Description,
-			EstimatedTokens: truncation.ReturnedTokens,
-			LastModified:    lastModified,
-			CacheState:      fetched.CacheState,
-		}
-
-		if !fetched.CachedAt.IsZero() {
-			metadata.CachedAt = fetched.CachedAt.Format(time.RFC3339Nano)
-		}
-
+		metadata := buildFetchMetadata(fetched, contentType, language, lastModified, truncation.ReturnedTokens)
 		response := &FetchResponse{
-			Metadata: metadata,
-			Content:  truncation.Content,
-		}
-
-		if truncation.Truncated {
-			nextStart := truncation.ReturnedChars
-			nextEnd := min(truncation.TotalChars, nextStart+truncation.ReturnedChars)
-			if nextStart < truncation.TotalChars {
-				response.NextRange = &content.RangeOptions{
-					Type:  "chars",
-					Start: nextStart,
-					End:   nextEnd,
-				}
-			}
+			Metadata:  metadata,
+			Content:   truncation.Content,
+			NextRange: nextRangeForTruncation(truncation),
 		}
 
 		return response, nil
@@ -241,26 +208,57 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 
 	estimatedTokens := content.EstimateTokens(workingText, contentType)
 
-	metadata := Metadata{
-		URL:             fetched.URL,
-		StatusCode:      fetched.StatusCode,
-		ContentType:     contentType,
-		Language:        language,
-		Title:           fetched.Title,
-		Description:     fetched.Description,
-		EstimatedTokens: estimatedTokens,
-		LastModified:    lastModified,
-		CacheState:      fetched.CacheState,
-	}
-
-	if !fetched.CachedAt.IsZero() {
-		metadata.CachedAt = fetched.CachedAt.Format(time.RFC3339Nano)
-	}
+	metadata := buildFetchMetadata(fetched, contentType, language, lastModified, estimatedTokens)
 
 	return &FetchResponse{
 		Metadata: metadata,
 		Content:  workingText,
 	}, nil
+}
+
+func buildFetchMetadata(resp *client.Response, contentType, language, lastModified string, tokens int) Metadata {
+	metadata := Metadata{
+		URL:             resp.URL,
+		StatusCode:      resp.StatusCode,
+		ContentType:     contentType,
+		Language:        language,
+		Title:           resp.Title,
+		Description:     resp.Description,
+		EstimatedTokens: tokens,
+		LastModified:    lastModified,
+		CacheState:      resp.CacheState,
+	}
+
+	if !resp.CachedAt.IsZero() {
+		metadata.CachedAt = resp.CachedAt.Format(time.RFC3339Nano)
+	}
+
+	return metadata
+}
+
+func nextRangeForTruncation(result *content.TruncateResult) *content.RangeOptions {
+	if result == nil || !result.Truncated {
+		return nil
+	}
+
+	nextStart := result.ReturnedChars
+	if nextStart >= result.TotalChars {
+		return nil
+	}
+
+	nextEnd := min(result.TotalChars, nextStart+result.ReturnedChars)
+	return &content.RangeOptions{
+		Type:  "chars",
+		Start: nextStart,
+		End:   nextEnd,
+	}
+}
+
+func firstHeader(headers map[string][]string, key string) string {
+	if values, ok := headers[key]; ok && len(values) > 0 {
+		return values[0]
+	}
+	return ""
 }
 
 // validateRequest validates the fetch request.
@@ -269,24 +267,7 @@ func (h *Handler) validateRequest(req *FetchRequest) error {
 		return fmt.Errorf("request cannot be nil")
 	}
 
-	if strings.TrimSpace(req.URL) == "" {
-		return fmt.Errorf("url cannot be empty")
-	}
-
-	parsedURL, err := url.ParseRequestURI(req.URL)
-	if err != nil {
-		return fmt.Errorf("invalid url: %w", err)
-	}
-
-	if parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return fmt.Errorf("url must be absolute with scheme (http/https) and host")
-	}
-
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return fmt.Errorf("url scheme must be http or https")
-	}
-
-	if err := h.validateNotInternalURL(parsedURL); err != nil {
+	if _, err := h.parseAndValidateExternalURL(req.URL); err != nil {
 		return err
 	}
 
@@ -346,9 +327,8 @@ func (h *Handler) fetchSitemapRecursive(ctx context.Context, sitemapURL string, 
 	if result.IsSitemapIndex {
 		h.logger.Debug("found nested sitemap index", "url", sitemapURL, "child_count", len(result.ChildMaps))
 
-		// Parallelize child sitemap fetching
 		resultCh := make(chan []string, len(result.ChildMaps))
-		semaphore := make(chan struct{}, 5) // Limit to 5 concurrent fetches
+		semaphore := make(chan struct{}, 5)
 
 		for _, childURL := range result.ChildMaps {
 			go func(url string) {
@@ -363,7 +343,6 @@ func (h *Handler) fetchSitemapRecursive(ctx context.Context, sitemapURL string, 
 			}(childURL)
 		}
 
-		// Collect results
 		for i := 0; i < len(result.ChildMaps); i++ {
 			select {
 			case urls := <-resultCh:
@@ -658,24 +637,7 @@ func (h *Handler) validateMapRequest(req *MapRequest) error {
 		return fmt.Errorf("request cannot be nil")
 	}
 
-	if strings.TrimSpace(req.URL) == "" {
-		return fmt.Errorf("url cannot be empty")
-	}
-
-	parsedURL, err := url.ParseRequestURI(req.URL)
-	if err != nil {
-		return fmt.Errorf("invalid url: %w", err)
-	}
-
-	if parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return fmt.Errorf("url must be absolute with scheme (http/https) and host")
-	}
-
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return fmt.Errorf("url scheme must be http or https")
-	}
-
-	if err := h.validateNotInternalURL(parsedURL); err != nil {
+	if _, err := h.parseAndValidateExternalURL(req.URL); err != nil {
 		return err
 	}
 
@@ -684,6 +646,31 @@ func (h *Handler) validateMapRequest(req *MapRequest) error {
 	}
 
 	return nil
+}
+
+func (h *Handler) parseAndValidateExternalURL(raw string) (*url.URL, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("url cannot be empty")
+	}
+
+	parsedURL, err := url.ParseRequestURI(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid url: %w", err)
+	}
+
+	if parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return nil, fmt.Errorf("url must be absolute with scheme (http/https) and host")
+	}
+
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, fmt.Errorf("url scheme must be http or https")
+	}
+
+	if err := h.validateNotInternalURL(parsedURL); err != nil {
+		return nil, err
+	}
+
+	return parsedURL, nil
 }
 
 // validateNotInternalURL prevents SSRF attacks by blocking private/internal IP addresses.

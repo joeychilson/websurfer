@@ -104,13 +104,6 @@ func (c *CacheConfig) IsStaleWhileRevalidateEnabled() bool {
 	return c.StaleTime > 0
 }
 
-// Cache represents the cache configuration.
-// Deprecated: This type is unused and kept for backward compatibility.
-type Cache struct {
-	TTL      string `yaml:"ttl"`
-	StaleTTL string `yaml:"stale_ttl"`
-}
-
 // FetchConfig defines how to fetch webpages, including HTTP client settings,
 // browser automation, robots.txt compliance, and content format preferences.
 type FetchConfig struct {
@@ -162,7 +155,10 @@ func (f *FetchConfig) GetRobotsTxtCacheTTL() time.Duration {
 
 // ShouldFollowRedirects returns whether to follow redirects (default: true)
 func (f *FetchConfig) ShouldFollowRedirects() bool {
-	return f.FollowRedirects || f.MaxRedirects != 0
+	if f.MaxRedirects > 0 {
+		return true
+	}
+	return f.FollowRedirects
 }
 
 // GetMaxRedirects returns the max number of redirects with a default of 10
@@ -170,7 +166,7 @@ func (f *FetchConfig) GetMaxRedirects() int {
 	if f.MaxRedirects > 0 {
 		return f.MaxRedirects
 	}
-	if !f.FollowRedirects {
+	if !f.ShouldFollowRedirects() {
 		return 0
 	}
 	return 10

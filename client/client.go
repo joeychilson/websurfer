@@ -12,7 +12,6 @@ import (
 
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/config"
-	"github.com/joeychilson/websurfer/content"
 	"github.com/joeychilson/websurfer/fetcher"
 	"github.com/joeychilson/websurfer/logger"
 	"github.com/joeychilson/websurfer/parser"
@@ -48,6 +47,11 @@ type Response struct {
 	CacheState  string
 	CachedAt    time.Time
 }
+
+var (
+	titleRegex           = regexp.MustCompile(`(?i)<title[^>]*>(.*?)</title>`)
+	descriptionMetaRegex = regexp.MustCompile(`(?is)<meta\s+(?:name=["']description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+name=["']description["']|property=["']og:description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:description["'])`)
+)
 
 // New creates a new Client with the given configuration.
 func New(cfg *config.Config) (*Client, error) {
@@ -254,46 +258,6 @@ func (c *Client) FetchNoCache(ctx context.Context, urlStr string) (*Response, er
 	}, nil
 }
 
-// FetchAndExtractRange fetches a URL and extracts a specific range from the content.
-// This is a convenience method that combines Fetch with content.ExtractRange.
-// The returned Response will have its Body modified to contain only the extracted range.
-func (c *Client) FetchAndExtractRange(ctx context.Context, urlStr string, opts *content.RangeOptions) (*Response, error) {
-	resp, err := c.Fetch(ctx, urlStr)
-	if err != nil {
-		return nil, err
-	}
-
-	if opts != nil {
-		extracted, err := content.ExtractRange(string(resp.Body), opts)
-		if err != nil {
-			return nil, fmt.Errorf("range extraction failed: %w", err)
-		}
-		resp.Body = []byte(extracted)
-	}
-
-	return resp, nil
-}
-
-// FetchAndTruncate fetches a URL and truncates the content to fit within maxTokens.
-// This is a convenience method that combines Fetch with content.Truncate.
-// Returns the response with truncated body, the truncation result, and any error.
-func (c *Client) FetchAndTruncate(ctx context.Context, urlStr string, maxTokens int) (*Response, *content.TruncateResult, error) {
-	resp, err := c.Fetch(ctx, urlStr)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	contentType := ""
-	if ct, ok := resp.Headers["Content-Type"]; ok && len(ct) > 0 {
-		contentType = ct[0]
-	}
-
-	result := content.Truncate(string(resp.Body), contentType, maxTokens)
-	resp.Body = []byte(result.Content)
-
-	return resp, result, nil
-}
-
 // GetSitemapsFromRobotsTxt retrieves sitemap URLs declared in robots.txt for a URL.
 // Returns an empty slice if robots.txt doesn't exist or doesn't declare sitemaps.
 func (c *Client) GetSitemapsFromRobotsTxt(ctx context.Context, urlStr string) ([]string, error) {
@@ -432,7 +396,6 @@ func (c *Client) applyCrawlDelay(resolved config.ResolvedConfig, crawlDelay time
 
 // extractTitle extracts the title from HTML content.
 func extractTitle(htmlContent string) string {
-	titleRegex := regexp.MustCompile(`(?i)<title[^>]*>(.*?)</title>`)
 	if matches := titleRegex.FindStringSubmatch(htmlContent); len(matches) > 1 {
 		title := strings.TrimSpace(matches[1])
 		return html.UnescapeString(title)
@@ -443,24 +406,14 @@ func extractTitle(htmlContent string) string {
 // extractDescription extracts the meta description from HTML content.
 // Checks both standard meta description and Open Graph description.
 func extractDescription(htmlContent string) string {
-	descRegex := regexp.MustCompile(`(?i)<meta\s+name=["']description["']\s+content=["']([^"']+)["']`)
-	if matches := descRegex.FindStringSubmatch(htmlContent); len(matches) > 1 {
-		return html.UnescapeString(strings.TrimSpace(matches[1]))
+	matches := descriptionMetaRegex.FindStringSubmatch(htmlContent)
+	if len(matches) == 0 {
+		return ""
 	}
-
-	descRegex2 := regexp.MustCompile(`(?i)<meta\s+content=["']([^"']+)["']\s+name=["']description["']`)
-	if matches := descRegex2.FindStringSubmatch(htmlContent); len(matches) > 1 {
-		return html.UnescapeString(strings.TrimSpace(matches[1]))
-	}
-
-	ogDescRegex := regexp.MustCompile(`(?i)<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']`)
-	if matches := ogDescRegex.FindStringSubmatch(htmlContent); len(matches) > 1 {
-		return html.UnescapeString(strings.TrimSpace(matches[1]))
-	}
-
-	ogDescRegex2 := regexp.MustCompile(`(?i)<meta\s+content=["']([^"']+)["']\s+property=["']og:description["']`)
-	if matches := ogDescRegex2.FindStringSubmatch(htmlContent); len(matches) > 1 {
-		return html.UnescapeString(strings.TrimSpace(matches[1]))
+	for _, match := range matches[1:] {
+		if match != "" {
+			return html.UnescapeString(strings.TrimSpace(match))
+		}
 	}
 	return ""
 }

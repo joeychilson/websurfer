@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/joeychilson/websurfer/config"
 )
@@ -159,11 +158,6 @@ func (f *Fetcher) FetchWithOptions(ctx context.Context, urlStr string, opts *Fet
 	}
 
 	return nil, fmt.Errorf("no URLs succeeded for %s", urlStr)
-}
-
-// SetTimeout updates the client timeout. Useful for testing.
-func (f *Fetcher) SetTimeout(timeout time.Duration) {
-	f.client.Timeout = timeout
 }
 
 // GetHTTPClient returns the underlying HTTP client.
