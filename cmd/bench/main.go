@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/joeychilson/websurfer/api"
+	"github.com/joeychilson/websurfer/search"
 )
 
 const (
@@ -18,11 +19,12 @@ const (
 )
 
 type BenchmarkResult struct {
-	Metadata      api.Metadata  `json:"metadata,omitempty"`
-	TimeTaken     time.Duration `json:"time_taken_ms"`
-	ContentLength int           `json:"content_length,omitempty"`
-	RequestTime   string        `json:"request_time"`
-	Content       string        `json:"content,omitempty"`
+	Metadata      api.Metadata   `json:"metadata,omitempty"`
+	TimeTaken     time.Duration  `json:"time_taken_ms"`
+	ContentLength int            `json:"content_length,omitempty"`
+	RequestTime   string         `json:"request_time"`
+	Content       string         `json:"content,omitempty"`
+	SearchResults *search.Result `json:"search_results,omitempty"`
 }
 
 func main() {
@@ -102,6 +104,7 @@ func benchmarkFetch(serverURL, targetURL string) (*BenchmarkResult, error) {
 		ContentLength: len(fetchResp.Content),
 		RequestTime:   time.Now().Format(time.RFC3339),
 		Content:       fetchResp.Content,
+		SearchResults: fetchResp.SearchResults,
 	}, nil
 }
 
@@ -111,7 +114,12 @@ func outputJSON(result *BenchmarkResult) {
 		"request_time":   result.RequestTime,
 		"metadata":       result.Metadata,
 		"content_length": result.ContentLength,
-		"content":        result.Content,
+	}
+
+	if result.SearchResults != nil {
+		output["search_results"] = result.SearchResults
+	} else {
+		output["content"] = result.Content
 	}
 
 	jsonData, err := json.MarshalIndent(output, "", "  ")
@@ -167,5 +175,42 @@ func outputHuman(result *BenchmarkResult) {
 	fmt.Printf("📅 Request Time:    %s\n", result.RequestTime)
 
 	fmt.Println()
-	fmt.Printf("Content:          %s\n", result.Content)
+
+	if result.SearchResults != nil {
+		fmt.Println("=== Search Results ===")
+		fmt.Println()
+		fmt.Printf("Query:            %s\n", result.SearchResults.Query)
+		fmt.Printf("Total Matches:    %d\n", result.SearchResults.TotalMatches)
+		fmt.Printf("Returned Matches: %d\n", result.SearchResults.ReturnedMatches)
+		fmt.Println()
+
+		for i, match := range result.SearchResults.Results {
+			fmt.Printf("--- Result #%d (Rank: %d, Score: %.2f) ---\n", i+1, match.Rank, match.Score)
+
+			if match.Location.SectionPath != "" {
+				fmt.Printf("Section:          %s\n", match.Location.SectionPath)
+			}
+
+			fmt.Printf("Location:         chars %d-%d, lines %d-%d\n",
+				match.Location.CharStart, match.Location.CharEnd,
+				match.Location.LineStart, match.Location.LineEnd)
+			fmt.Printf("Estimated Tokens: %d\n", match.EstimatedTokens)
+			fmt.Println()
+
+			fmt.Printf("Snippet:\n%s\n", truncateForDisplay(match.Snippet, 500))
+			fmt.Println()
+		}
+	} else {
+		fmt.Println("=== Content ===")
+		fmt.Println()
+		fmt.Printf("%s\n", result.Content)
+	}
+}
+
+// truncateForDisplay truncates text for human-readable display
+func truncateForDisplay(text string, maxLen int) string {
+	if len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen] + "..."
 }

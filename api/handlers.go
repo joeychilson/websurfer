@@ -13,6 +13,7 @@ import (
 	"github.com/joeychilson/websurfer/client"
 	"github.com/joeychilson/websurfer/content"
 	"github.com/joeychilson/websurfer/logger"
+	"github.com/joeychilson/websurfer/search"
 	urlpkg "github.com/joeychilson/websurfer/url"
 )
 
@@ -21,6 +22,7 @@ type FetchRequest struct {
 	URL       string                `json:"url"`
 	MaxTokens int                   `json:"max_tokens,omitempty"`
 	Range     *content.RangeOptions `json:"range,omitempty"`
+	Search    *search.Options       `json:"search,omitempty"`
 }
 
 // Metadata contains metadata about the fetched content.
@@ -39,9 +41,10 @@ type Metadata struct {
 
 // FetchResponse represents the response from a fetch request.
 type FetchResponse struct {
-	Metadata  Metadata              `json:"metadata"`
-	Content   string                `json:"content"`
-	NextRange *content.RangeOptions `json:"next_range,omitempty"`
+	Metadata      Metadata              `json:"metadata"`
+	Content       string                `json:"content,omitempty"`
+	SearchResults *search.Result        `json:"search_results,omitempty"`
+	NextRange     *content.RangeOptions `json:"next_range,omitempty"`
 }
 
 // ErrorResponse represents an error.
@@ -133,6 +136,24 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 			return nil, fmt.Errorf("range extraction failed: %w", err)
 		}
 		workingText = extracted
+	}
+
+	if req.Search != nil {
+		searchResults, err := search.Search(workingText, contentType, *req.Search)
+		if err != nil {
+			return nil, fmt.Errorf("search failed: %w", err)
+		}
+
+		totalTokens := 0
+		for _, match := range searchResults.Results {
+			totalTokens += match.EstimatedTokens
+		}
+
+		metadata := buildFetchMetadata(fetched, contentType, language, lastModified, totalTokens)
+		return &FetchResponse{
+			Metadata:      metadata,
+			SearchResults: searchResults,
+		}, nil
 	}
 
 	if req.MaxTokens > 0 {
@@ -229,9 +250,25 @@ func (h *Handler) validateRequest(req *FetchRequest) error {
 		}
 	}
 
+	if req.Search != nil {
+		if req.Search.Query == "" {
+			return fmt.Errorf("search query cannot be empty")
+		}
+		if req.Search.WindowSize < 0 {
+			return fmt.Errorf("window_size must be non-negative")
+		}
+		if req.Search.MaxResults < 0 {
+			return fmt.Errorf("max_results must be non-negative")
+		}
+		if req.Search.MinScore < 0 {
+			return fmt.Errorf("min_score must be non-negative")
+		}
+	}
+
 	return nil
 }
 
+// parseAndValidateExternalURL parses and validates an external URL.
 func (h *Handler) parseAndValidateExternalURL(raw string) (*url.URL, error) {
 	if err := urlpkg.ValidateExternal(raw); err != nil {
 		return nil, err

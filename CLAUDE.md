@@ -88,7 +88,7 @@ sudo dnf install poppler-utils
 ### Request Flow
 
 1. **API Layer** (`api/`): Chi router with middleware (logging, rate limiting, recovery)
-   - `/fetch` (POST): Fetch and parse a single URL with optional truncation/range selection
+   - `/fetch` (POST): Fetch and parse a single URL with optional truncation/range selection/search
    - `/health` (GET): Health check endpoint
 
 2. **Client Layer** (`client/`): Central orchestrator that coordinates all components
@@ -110,6 +110,102 @@ sudo dnf install poppler-utils
 4. **Content Processing** (`content/`):
    - Token estimation and truncation for LLM context limits
    - Range extraction (lines/chars) for pagination
+
+5. **Search System** (`search/`):
+   - Window-based full-text search for finding relevant content in documents
+   - Density scoring with coverage boost for relevance ranking
+   - Smart window extraction with context preservation
+   - Automatic merging of overlapping results
+   - Highlighted matches for easy identification
+
+### Search System
+
+The `search/` package implements window-based full-text search optimized for LLM consumption:
+
+**Architecture**:
+- **Window-Based Search** (`search/window.go`): Extracts text windows around match positions
+  - Finds all occurrences of query terms in the document
+  - Creates configurable-size windows (default 1500 chars ~500-700 tokens) around each match
+  - Expands windows to word boundaries for clean snippets
+  - Merges overlapping windows to avoid duplicate results
+  - No artificial segmentation - preserves document context
+
+- **Density Scoring**: Ranks windows by term concentration and coverage
+  - **Density**: Matches per 1000 characters - rewards concentrated matches
+  - **Coverage Boost**: Exponential boost for windows containing more unique query terms
+  - Formula: `score = density + (coverage² × 10)`
+  - Higher scores indicate more relevant content
+
+- **Tokenization** (`search/tokenizer.go`): Text normalization for search
+  - Case-insensitive matching
+  - Punctuation removal
+  - Stop word filtering (minimal list: "the", "a", "is", etc.)
+  - Min token length: 2 characters
+
+- **Highlighting** (`search/highlight.go`): Match visualization
+  - Wraps matched terms with `**bold**` markdown formatting
+  - Preserves HTML structure when present (LLMs can parse tags)
+  - Case-insensitive matching maintains original casing
+
+**Search Options**:
+```go
+type Options struct {
+    Query      string  // Search query (required)
+    WindowSize int     // Window size in chars (default: 2000)
+    MaxResults int     // Max windows to return (default: 10)
+    MinScore   float64 // Min density score (default: 0.0)
+    Highlight  bool    // Wrap matches with ** (default: false)
+}
+```
+
+**Usage in API**:
+```json
+POST /fetch
+{
+  "url": "https://example.com/document",
+  "search": {
+    "query": "revenue growth",
+    "window_size": 2000,
+    "max_results": 10,
+    "min_score": 0.0
+  }
+}
+```
+
+**Response Format**:
+When search is used, the response contains `search_results` instead of `content`:
+```json
+{
+  "metadata": { ... },
+  "search_results": {
+    "query": "revenue growth",
+    "total_matches": 15,
+    "returned_matches": 10,
+    "results": [
+      {
+        "rank": 1,
+        "score": 12.45,
+        "location": {
+          "char_start": 1234,
+          "char_end": 2734,
+          "line_start": 42,
+          "line_end": 58
+        },
+        "snippet": "continuous text window with **revenue** and **growth** highlighted",
+        "estimated_tokens": 485
+      }
+    ]
+  }
+}
+```
+
+**Key Features**:
+- Multi-term queries: "revenue growth" searches for both terms
+- Context preservation: No segmentation means tables, lists, and structure stay intact
+- Coverage boost: Windows with both "revenue" AND "growth" rank higher than windows with just one term
+- Token efficiency: Estimates tokens to fit within LLM context limits
+- Zero infrastructure: Pure Go, no external dependencies
+- HTML-aware: Preserves tags for structural understanding
 
 ### Configuration System
 
