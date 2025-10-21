@@ -52,6 +52,7 @@ type MapRequest struct {
 	MaxURLs    int    `json:"max_urls,omitempty"`
 	SameDomain bool   `json:"same_domain,omitempty"`
 	Depth      int    `json:"depth,omitempty"`
+	PathPrefix string `json:"path_prefix,omitempty"`
 }
 
 // MapResponse represents the response from a map request.
@@ -555,6 +556,18 @@ func (h *Handler) processMap(ctx context.Context, req *MapRequest) (*MapResponse
 
 	links = urlpkg.Deduplicate(links)
 	h.logger.Debug("deduplicated URLs", "count", len(links))
+
+	if req.PathPrefix != "" {
+		filtered := make([]string, 0, len(links))
+		for _, link := range links {
+			parsedURL, err := url.Parse(link)
+			if err == nil && strings.HasPrefix(parsedURL.Path, req.PathPrefix) {
+				filtered = append(filtered, link)
+			}
+		}
+		links = filtered
+		h.logger.Debug("filtered by path prefix", "prefix", req.PathPrefix, "count", len(links))
+	}
 
 	maxURLs := req.MaxURLs
 	if maxURLs == 0 {
