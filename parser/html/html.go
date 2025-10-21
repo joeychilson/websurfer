@@ -2,6 +2,7 @@ package html
 
 import (
 	"context"
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode"
@@ -63,14 +64,15 @@ func New(opts ...Option) *Parser {
 // Removes scripts, styles, empty elements, divs, and compresses whitespace
 // while preserving all semantic content and structure.
 // If rules are configured and a URL is in the context, applies matching rules.
+// If a URL is in the context, converts relative links to absolute URLs.
 func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 	if len(content) == 0 {
 		return content, nil
 	}
 
 	result := content
+	urlStr := parser.GetURL(ctx)
 	if p.rules != nil {
-		urlStr := parser.GetURL(ctx)
 		if urlStr != "" {
 			result = p.rules.Apply(urlStr, "text/html", result)
 		}
@@ -84,6 +86,10 @@ func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 	}
 
 	optimizeHTML(doc)
+
+	if urlStr != "" {
+		convertLinksToAbsolute(doc, urlStr)
+	}
 
 	var buf strings.Builder
 	if err := html.Render(&buf, doc); err != nil {
@@ -220,4 +226,62 @@ func removeWhitespace(htmlStr string) string {
 	}
 
 	return minified
+}
+
+// convertLinksToAbsolute traverses the HTML tree and converts all relative hrefs and image srcs to absolute URLs.
+// Skips javascript:, mailto:, tel:, and # (fragment-only) links for <a> tags.
+// Converts all relative image src attributes to absolute URLs for <img> tags.
+func convertLinksToAbsolute(n *html.Node, baseURL string) {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			convertLinksToAbsolute(c, baseURL)
+		}
+		return
+	}
+
+	if n.Type == html.ElementNode {
+		if n.Data == "a" {
+			for i, attr := range n.Attr {
+				if attr.Key == "href" && attr.Val != "" {
+					href := strings.TrimSpace(attr.Val)
+
+					if strings.HasPrefix(href, "#") ||
+						strings.HasPrefix(href, "javascript:") ||
+						strings.HasPrefix(href, "mailto:") ||
+						strings.HasPrefix(href, "tel:") {
+						continue
+					}
+
+					parsed, err := url.Parse(href)
+					if err != nil {
+						continue
+					}
+
+					absolute := base.ResolveReference(parsed)
+					n.Attr[i].Val = absolute.String()
+				}
+			}
+		}
+
+		if n.Data == "img" {
+			for i, attr := range n.Attr {
+				if attr.Key == "src" && attr.Val != "" {
+					src := strings.TrimSpace(attr.Val)
+
+					parsed, err := url.Parse(src)
+					if err != nil {
+						continue
+					}
+
+					absolute := base.ResolveReference(parsed)
+					n.Attr[i].Val = absolute.String()
+				}
+			}
+		}
+	}
+
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		convertLinksToAbsolute(c, baseURL)
+	}
 }

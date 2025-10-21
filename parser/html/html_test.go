@@ -4,10 +4,12 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/joeychilson/websurfer/parser"
 )
 
 func TestParser_Parse(t *testing.T) {
-	parser := New()
+	p := New()
 	ctx := context.Background()
 
 	t.Run("removes scripts and styles", func(t *testing.T) {
@@ -24,7 +26,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -53,7 +55,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -76,7 +78,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -113,7 +115,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -140,7 +142,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -149,8 +151,6 @@ func TestParser_Parse(t *testing.T) {
 		if strings.Contains(result, "    ") {
 			t.Errorf("output should collapse multiple spaces, got: %s", result)
 		}
-		// Note: output now contains semantic newlines after block elements (</p>, etc.) for LLM-friendly line-based navigation
-		// This is intentional behavior, so we don't check for absence of newlines
 	})
 
 	t.Run("preserves essential attributes", func(t *testing.T) {
@@ -168,7 +168,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -216,7 +216,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -248,18 +248,16 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
 
 		result := string(output)
-		// Output now contains newlines after block elements for LLM-friendly line-based navigation
 		lines := strings.Split(result, "\n")
 		if len(lines) < 2 {
 			t.Errorf("output should have multiple lines separated by block elements, got: %s", result)
 		}
-		// Should still remove whitespace between tags on the same line
 		for _, line := range lines {
 			if strings.Contains(line, "> <") {
 				t.Errorf("output should not have whitespace between tags on same line, got: %s", line)
@@ -269,7 +267,7 @@ func TestParser_Parse(t *testing.T) {
 
 	t.Run("handles empty content", func(t *testing.T) {
 		input := []byte("")
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -341,7 +339,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -395,8 +393,6 @@ func TestParser_Parse(t *testing.T) {
 			t.Errorf("output should preserve alt attribute")
 		}
 
-		// Output now contains semantic newlines after block elements for LLM-friendly navigation
-		// Check that whitespace between tags on the same line is still removed
 		lines := strings.Split(result, "\n")
 		for _, line := range lines {
 			if strings.Contains(line, "> <") {
@@ -429,7 +425,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -465,7 +461,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -489,7 +485,7 @@ func TestParser_Parse(t *testing.T) {
 			</html>
 		`)
 
-		output, err := parser.Parse(ctx, input)
+		output, err := p.Parse(ctx, input)
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -509,14 +505,208 @@ func TestParser_Parse(t *testing.T) {
 			t.Errorf("output should preserve link text")
 		}
 	})
+
+	t.Run("converts relative links to absolute URLs", func(t *testing.T) {
+		input := []byte(`
+			<html>
+				<body>
+					<a href="/wiki/Category:Programming_tools">Category</a>
+					<a href="/about">About</a>
+					<a href="https://external.com/page">External</a>
+					<a href="../parent">Parent</a>
+					<a href="relative/path">Relative</a>
+				</body>
+			</html>
+		`)
+
+		p := New()
+		ctx := parser.WithURL(context.Background(), "https://en.wikipedia.org/wiki/Main_Page")
+		output, err := p.Parse(ctx, input)
+		if err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+
+		result := string(output)
+		if !strings.Contains(result, `href="https://en.wikipedia.org/wiki/Category:Programming_tools"`) {
+			t.Errorf("output should convert /wiki/Category:Programming_tools to absolute URL, got: %s", result)
+		}
+		if !strings.Contains(result, `href="https://en.wikipedia.org/about"`) {
+			t.Errorf("output should convert /about to absolute URL, got: %s", result)
+		}
+		if !strings.Contains(result, `href="https://external.com/page"`) {
+			t.Errorf("output should preserve external absolute URLs, got: %s", result)
+		}
+		if !strings.Contains(result, `href="https://en.wikipedia.org/parent"`) {
+			t.Errorf("output should resolve ../parent to absolute URL, got: %s", result)
+		}
+		if !strings.Contains(result, `href="https://en.wikipedia.org/wiki/relative/path"`) {
+			t.Errorf("output should resolve relative/path to absolute URL, got: %s", result)
+		}
+	})
+
+	t.Run("skips special link types when converting", func(t *testing.T) {
+		input := []byte(`
+			<html>
+				<body>
+					<a href="#section">Anchor</a>
+					<a href="javascript:void(0)">JavaScript</a>
+					<a href="mailto:test@example.com">Email</a>
+					<a href="tel:+1234567890">Phone</a>
+					<a href="/normal">Normal</a>
+				</body>
+			</html>
+		`)
+
+		p := New()
+		ctx := parser.WithURL(context.Background(), "https://example.com/page")
+		output, err := p.Parse(ctx, input)
+		if err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+
+		result := string(output)
+		if !strings.Contains(result, `href="#section"`) {
+			t.Errorf("output should preserve anchor links, got: %s", result)
+		}
+		if !strings.Contains(result, `href="javascript:void(0)"`) {
+			t.Errorf("output should preserve javascript links, got: %s", result)
+		}
+		if !strings.Contains(result, `href="mailto:test@example.com"`) {
+			t.Errorf("output should preserve mailto links, got: %s", result)
+		}
+		if !strings.Contains(result, `href="tel:+1234567890"`) {
+			t.Errorf("output should preserve tel links, got: %s", result)
+		}
+		if !strings.Contains(result, `href="https://example.com/normal"`) {
+			t.Errorf("output should convert normal relative links, got: %s", result)
+		}
+	})
+
+	t.Run("handles parsing without URL in context", func(t *testing.T) {
+		input := []byte(`
+			<html>
+				<body>
+					<a href="/about">About</a>
+				</body>
+			</html>
+		`)
+
+		p := New()
+		ctx := context.Background()
+		output, err := p.Parse(ctx, input)
+		if err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+
+		result := string(output)
+		if !strings.Contains(result, `href="/about"`) {
+			t.Errorf("output should preserve relative links when no base URL is provided, got: %s", result)
+		}
+	})
+
+	t.Run("converts relative image src to absolute URLs", func(t *testing.T) {
+		input := []byte(`
+			<html>
+				<body>
+					<img src="/images/logo.png" alt="Logo">
+					<img src="relative/image.jpg" alt="Relative">
+					<img src="https://example.com/absolute.png" alt="Absolute">
+					<img src="//cdn.example.com/image.png" alt="Protocol relative">
+				</body>
+			</html>
+		`)
+
+		p := New()
+		ctx := parser.WithURL(context.Background(), "https://example.com/page/article")
+		output, err := p.Parse(ctx, input)
+		if err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+
+		result := string(output)
+		if !strings.Contains(result, `src="https://example.com/images/logo.png"`) {
+			t.Errorf("output should convert /images/logo.png to absolute URL, got: %s", result)
+		}
+		if !strings.Contains(result, `src="https://example.com/page/relative/image.jpg"`) {
+			t.Errorf("output should convert relative/image.jpg to absolute URL, got: %s", result)
+		}
+		if !strings.Contains(result, `src="https://example.com/absolute.png"`) {
+			t.Errorf("output should preserve absolute image URLs, got: %s", result)
+		}
+		if !strings.Contains(result, `src="https://cdn.example.com/image.png"`) {
+			t.Errorf("output should convert protocol-relative URLs, got: %s", result)
+		}
+	})
+
+	t.Run("converts Wikipedia image URLs correctly", func(t *testing.T) {
+		input := []byte(`
+			<html>
+				<body>
+					<img src="//upload.wikimedia.org/wikipedia/commons/thumb/c/ca/Wiki_Loves_Monuments_Logo_notext.svg/70px-Wiki_Loves_Monuments_Logo_notext.svg.png" alt="Wiki Logo">
+					<img src="/static/images/icons/wikipedia.png" alt="Wikipedia Icon">
+				</body>
+			</html>
+		`)
+
+		p := New()
+		ctx := parser.WithURL(context.Background(), "https://en.wikipedia.org/wiki/Main_Page")
+		output, err := p.Parse(ctx, input)
+		if err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+
+		result := string(output)
+		if !strings.Contains(result, `src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/Wiki_Loves_Monuments_Logo_notext.svg/70px-Wiki_Loves_Monuments_Logo_notext.svg.png"`) {
+			t.Errorf("output should convert Wikipedia CDN URL to absolute with https, got: %s", result)
+		}
+		if !strings.Contains(result, `src="https://en.wikipedia.org/static/images/icons/wikipedia.png"`) {
+			t.Errorf("output should convert relative Wikipedia paths to absolute, got: %s", result)
+		}
+	})
+
+	t.Run("handles both links and images together", func(t *testing.T) {
+		input := []byte(`
+			<html>
+				<body>
+					<a href="/page">
+						<img src="/images/icon.png" alt="Icon">
+					</a>
+					<a href="https://external.com">
+						<img src="//cdn.external.com/logo.png" alt="External Logo">
+					</a>
+				</body>
+			</html>
+		`)
+
+		p := New()
+		ctx := parser.WithURL(context.Background(), "https://example.com")
+		output, err := p.Parse(ctx, input)
+		if err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+
+		result := string(output)
+		if !strings.Contains(result, `href="https://example.com/page"`) {
+			t.Errorf("output should convert href to absolute, got: %s", result)
+		}
+		if !strings.Contains(result, `src="https://example.com/images/icon.png"`) {
+			t.Errorf("output should convert img src to absolute, got: %s", result)
+		}
+		if !strings.Contains(result, `href="https://external.com"`) {
+			t.Errorf("output should preserve external href, got: %s", result)
+		}
+		if !strings.Contains(result, `src="https://cdn.external.com/logo.png"`) {
+			t.Errorf("output should convert protocol-relative src, got: %s", result)
+		}
+	})
 }
 
 func TestNew(t *testing.T) {
-	parser := New()
-	if parser == nil {
+	p := New()
+	if p == nil {
 		t.Fatal("New() should return non-nil parser")
 	}
-	if parser.policy == nil {
+	if p.policy == nil {
 		t.Fatal("New() should initialize policy")
 	}
 }

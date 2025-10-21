@@ -22,6 +22,7 @@ type BenchmarkResult struct {
 	TimeTaken     time.Duration `json:"time_taken_ms"`
 	ContentLength int           `json:"content_length,omitempty"`
 	RequestTime   string        `json:"request_time"`
+	Content       string        `json:"content,omitempty"`
 }
 
 func main() {
@@ -100,6 +101,7 @@ func benchmarkFetch(serverURL, targetURL string) (*BenchmarkResult, error) {
 		TimeTaken:     timeTaken,
 		ContentLength: len(fetchResp.Content),
 		RequestTime:   time.Now().Format(time.RFC3339),
+		Content:       fetchResp.Content,
 	}, nil
 }
 
@@ -109,6 +111,7 @@ func outputJSON(result *BenchmarkResult) {
 		"request_time":   result.RequestTime,
 		"metadata":       result.Metadata,
 		"content_length": result.ContentLength,
+		"content":        result.Content,
 	}
 
 	jsonData, err := json.MarshalIndent(output, "", "  ")
@@ -162,4 +165,7 @@ func outputHuman(result *BenchmarkResult) {
 	fmt.Println()
 	fmt.Printf("⏱️  Time Taken:      %v\n", result.TimeTaken)
 	fmt.Printf("📅 Request Time:    %s\n", result.RequestTime)
+
+	fmt.Println()
+	fmt.Printf("Content:          %s\n", result.Content)
 }

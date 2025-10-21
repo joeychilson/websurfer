@@ -89,7 +89,6 @@ sudo dnf install poppler-utils
 
 1. **API Layer** (`api/`): Chi router with middleware (logging, rate limiting, recovery)
    - `/fetch` (POST): Fetch and parse a single URL with optional truncation/range selection
-   - `/map` (POST): Discover and map URLs from a website (sitemap or link crawling)
    - `/health` (GET): Health check endpoint
 
 2. **Client Layer** (`client/`): Central orchestrator that coordinates all components
@@ -164,7 +163,7 @@ Cache implementations:
 
 ### Security
 
-- **SSRF Protection** (`api/handlers.go:617`): `validateNotInternalURL` prevents requests to private/loopback IPs
+- **SSRF Protection** (`url/url.go:138`): `ValidateExternal` prevents requests to private/loopback IPs
 - **Robots.txt respect**: Enforced by default (configurable per site)
 - **Rate limiting**: Both client-side (per-domain) and API-level (per-requester IP)
 
@@ -194,10 +193,6 @@ All API responses include:
 - **Metadata**: URL, status code, content type, title, description, cache state, estimated tokens
 - **Content**: The processed/parsed content
 - **NextRange** (optional): For paginated responses when content is truncated
-
-Map endpoint returns:
-- **Source**: "sitemap" or "html_links" (indicates discovery method)
-- **Pages**: Array of URLs with metadata (title, description, noindex flag)
 
 ## Environment Variables
 
