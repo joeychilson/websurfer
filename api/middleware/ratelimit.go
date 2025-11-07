@@ -55,7 +55,7 @@ func RateLimit(config RateLimitConfig) (*RateLimiter, error) {
 
 		redisConfig := &httprateredis.Config{
 			Client:    redisClient,
-			PrefixKey: "plainhtml:ratelimit",
+			PrefixKey: "websurfer:ratelimit",
 		}
 
 		rateLimiter = httprate.NewRateLimiter(
