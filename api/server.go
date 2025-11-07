@@ -68,7 +68,7 @@ func NewServer(c *client.Client, log logger.Logger, cfg *ServerConfig) (*Server,
 	}
 	r.Use(rateLimiter.Handler)
 
-	r.Post("/fetch", handler.HandleFetch)
+	r.Post("/v1/fetch", handler.HandleFetch)
 	r.Get("/health", handler.HandleHealth)
 
 	s := &Server{
