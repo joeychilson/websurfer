@@ -9,11 +9,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/joeychilson/websurfer/api"
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/client"
 	"github.com/joeychilson/websurfer/config"
 	"github.com/joeychilson/websurfer/logger"
+	api "github.com/joeychilson/websurfer/server"
 )
 
 const (

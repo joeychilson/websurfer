@@ -10,8 +10,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/joeychilson/websurfer/api"
 	"github.com/joeychilson/websurfer/search"
+	api "github.com/joeychilson/websurfer/server"
 )
 
 const (

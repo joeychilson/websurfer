@@ -23,7 +23,6 @@ go.work
 # Build output
 /bin/
 /dist/
-/server
 
 # IDE and editor files
 .vscode/

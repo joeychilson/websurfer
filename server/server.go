@@ -1,4 +1,4 @@
-package api
+package server
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/joeychilson/websurfer/api/middleware"
 	"github.com/joeychilson/websurfer/client"
 	"github.com/joeychilson/websurfer/logger"
+	"github.com/joeychilson/websurfer/server/middleware"
 )
 
 // ServerConfig holds configuration for the API server.
