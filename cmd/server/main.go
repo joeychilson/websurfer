@@ -36,7 +36,7 @@ func main() {
 	cfg := parseFlags()
 
 	log := setupLogger(cfg.logLevel)
-	log.Info("starting plainhtml API server",
+	log.Info("starting websurfer API server",
 		"addr", cfg.addr,
 		"cache_type", cfg.cacheType,
 		"log_level", cfg.logLevel)
@@ -72,7 +72,7 @@ func main() {
 		case "redis":
 			log.Info("using Redis cache", "url", cfg.redisURL)
 			var err error
-			cacheImpl, err = cache.NewRedisCacheFromURL(cfg.redisURL, "plainhtml:", cache.DefaultConfig())
+			cacheImpl, err = cache.NewRedisCacheFromURL(cfg.redisURL, "websurfer:", cache.DefaultConfig())
 			if err != nil {
 				log.Error("failed to create Redis cache", "error", err)
 				os.Exit(1)
@@ -132,7 +132,7 @@ func parseFlags() *appConfig {
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS]\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "PlainHTML API Server - LLM-optimized web scraping API\n\n")
+		fmt.Fprintf(os.Stderr, "WebSurfer API Server - LLM-optimized web scraping API\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")

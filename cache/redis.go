@@ -30,7 +30,7 @@ func NewRedisCache(config RedisConfig) *RedisCache {
 		config.Addr = "localhost:6379"
 	}
 	if config.Prefix == "" {
-		config.Prefix = "plainhtml:"
+		config.Prefix = "websurfer:"
 	}
 	if config.Config.TTL == 0 {
 		config.Config.TTL = DefaultConfig().TTL
@@ -61,7 +61,7 @@ func NewRedisCacheFromURL(redisURL string, prefix string, config Config) (*Redis
 	}
 
 	if prefix == "" {
-		prefix = "plainhtml:"
+		prefix = "websurfer:"
 	}
 	if config.TTL == 0 {
 		config.TTL = DefaultConfig().TTL
@@ -82,7 +82,7 @@ func NewRedisCacheFromURL(redisURL string, prefix string, config Config) (*Redis
 // NewRedisCacheWithClient creates a Redis cache with an existing client.
 func NewRedisCacheWithClient(client *redis.Client, prefix string, config Config) *RedisCache {
 	if prefix == "" {
-		prefix = "plainhtml:"
+		prefix = "websurfer:"
 	}
 	if config.TTL == 0 {
 		config.TTL = DefaultConfig().TTL
