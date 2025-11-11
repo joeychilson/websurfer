@@ -14,7 +14,6 @@ import (
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/client"
 	"github.com/joeychilson/websurfer/config"
-	"github.com/joeychilson/websurfer/logger"
 	api "github.com/joeychilson/websurfer/server"
 )
 
@@ -182,23 +181,27 @@ func parseFlags() *appConfig {
 	return cfg
 }
 
-func setupLogger(level string) logger.Logger {
-	var logLevel logger.Level
+func setupLogger(level string) *slog.Logger {
+	var logLevel slog.Level
 	switch level {
 	case "debug":
-		logLevel = logger.LevelDebug
+		logLevel = slog.LevelDebug
 	case "info":
-		logLevel = logger.LevelInfo
+		logLevel = slog.LevelInfo
 	case "warn":
-		logLevel = logger.LevelWarn
+		logLevel = slog.LevelWarn
 	case "error":
-		logLevel = logger.LevelError
+		logLevel = slog.LevelError
 	default:
 		slog.Warn("unknown log level, using info", "level", level)
-		logLevel = logger.LevelInfo
+		logLevel = slog.LevelInfo
 	}
 
-	return logger.NewWithLevel(logLevel)
+	opts := &slog.HandlerOptions{
+		Level: logLevel,
+	}
+	handler := slog.NewJSONHandler(os.Stderr, opts)
+	return slog.New(handler)
 }
 
 func getEnv(key, defaultValue string) string {

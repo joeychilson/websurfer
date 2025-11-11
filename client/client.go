@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -11,7 +12,6 @@ import (
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/config"
 	"github.com/joeychilson/websurfer/fetcher"
-	"github.com/joeychilson/websurfer/logger"
 	"github.com/joeychilson/websurfer/parser"
 	htmlparser "github.com/joeychilson/websurfer/parser/html"
 	"github.com/joeychilson/websurfer/parser/pdf"
@@ -29,7 +29,7 @@ type Client struct {
 	limiter        *ratelimit.Limiter
 	parser         *parser.Registry
 	cache          cache.Cache
-	logger         logger.Logger
+	logger         *slog.Logger
 	refreshing     sync.Map
 	userAgent      string
 	robotsCacheTTL time.Duration
@@ -91,7 +91,7 @@ func New(cfg *config.Config) (*Client, error) {
 		limiter:        limiter,
 		parser:         parserRegistry,
 		cache:          defaultCache,
-		logger:         logger.Noop(),
+		logger:         slog.Default(),
 		userAgent:      userAgent,
 		robotsCacheTTL: robotsCacheTTL,
 	}, nil
@@ -115,7 +115,7 @@ func (c *Client) WithCache(sharedCache cache.Cache) *Client {
 }
 
 // WithLogger sets the logger for the client.
-func (c *Client) WithLogger(log logger.Logger) *Client {
+func (c *Client) WithLogger(log *slog.Logger) *Client {
 	c.logger = log
 	return c
 }
@@ -239,7 +239,6 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 }
 
 // FetchNoCache retrieves content from the given URL without using cache.
-// It still respects robots.txt and rate limits.
 func (c *Client) FetchNoCache(ctx context.Context, urlStr string) (*Response, error) {
 	c.logger.Debug("fetch started (no cache)", "url", urlStr)
 

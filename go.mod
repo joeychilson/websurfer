@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.4.0
 	github.com/go-chi/chi/v5 v5.2.3
+	github.com/go-chi/httplog/v3 v3.3.0
 	github.com/go-chi/httprate v0.15.0
 	github.com/go-chi/httprate-redis v0.7.0
 	github.com/microcosm-cc/bluemonday v1.0.27

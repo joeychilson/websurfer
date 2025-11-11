@@ -2,13 +2,13 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httplog/v3"
 	"github.com/joeychilson/websurfer/client"
-	"github.com/joeychilson/websurfer/logger"
-	"github.com/joeychilson/websurfer/server/middleware"
 )
 
 // ServerConfig holds configuration for the API server.
@@ -21,14 +21,14 @@ type ServerConfig struct {
 // Server represents the API server.
 type Server struct {
 	client      *client.Client
-	logger      logger.Logger
-	rateLimiter *middleware.RateLimiter
+	logger      *slog.Logger
+	rateLimiter *RateLimiter
 }
 
 // New creates a new API server instance.
-func New(c *client.Client, log logger.Logger, cfg *ServerConfig) (*Server, error) {
+func New(c *client.Client, log *slog.Logger, cfg *ServerConfig) (*Server, error) {
 	if log == nil {
-		log = logger.Noop()
+		log = slog.Default()
 	}
 
 	if cfg == nil {
@@ -42,12 +42,12 @@ func New(c *client.Client, log logger.Logger, cfg *ServerConfig) (*Server, error
 		cfg.RateLimitWindow = time.Minute
 	}
 
-	rateLimitConfig := middleware.RateLimitConfig{
+	rateLimitConfig := RateLimitConfig{
 		RequestLimit:   cfg.RateLimitRequests,
 		WindowDuration: cfg.RateLimitWindow,
 		RedisURL:       cfg.RedisURL,
 	}
-	rateLimiter, err := middleware.RateLimit(rateLimitConfig)
+	rateLimiter, err := RateLimit(rateLimitConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
 	}
@@ -65,8 +65,10 @@ func (s *Server) Router() chi.Router {
 
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
-	r.Use(middleware.Logger(s.logger))
-	r.Use(chimiddleware.Recoverer)
+	r.Use(httplog.RequestLogger(s.logger, &httplog.Options{
+		Level:         slog.LevelInfo,
+		RecoverPanics: true,
+	}))
 	r.Use(s.rateLimiter.Handler)
 
 	r.Post("/v1/fetch", s.handleFetch)
