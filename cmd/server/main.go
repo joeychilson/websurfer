@@ -74,7 +74,9 @@ func main() {
 		case "redis":
 			log.Info("using Redis cache", "url", cfg.redisURL)
 			var err error
-			cacheImpl, err = cache.NewRedisCacheFromURL(cfg.redisURL, "websurfer:", cache.DefaultConfig())
+			cacheImpl, err = cache.NewRedisCache(cache.RedisConfig{
+				URL: cfg.redisURL,
+			})
 			if err != nil {
 				log.Error("failed to create Redis cache", "error", err)
 				os.Exit(1)

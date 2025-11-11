@@ -61,3 +61,23 @@ func DefaultConfig() Config {
 		MaxEntries:      1000,
 	}
 }
+
+// ApplyDefaults returns a new Config with default values applied for any zero-valued fields.
+func ApplyDefaults(config Config) Config {
+	defaults := DefaultConfig()
+
+	if config.TTL == 0 {
+		config.TTL = defaults.TTL
+	}
+	if config.StaleTime == 0 {
+		config.StaleTime = defaults.StaleTime
+	}
+	if config.CleanupInterval == 0 {
+		config.CleanupInterval = defaults.CleanupInterval
+	}
+	if config.MaxEntries == 0 {
+		config.MaxEntries = defaults.MaxEntries
+	}
+
+	return config
+}

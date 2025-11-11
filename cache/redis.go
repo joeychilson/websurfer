@@ -17,84 +17,39 @@ type RedisCache struct {
 
 // RedisConfig holds Redis-specific configuration.
 type RedisConfig struct {
-	Addr     string
-	Password string
-	DB       int
-	Prefix   string
-	Config   Config
+	URL    string
+	Prefix string
+	Config Config
 }
 
-// NewRedisCache creates a new Redis cache.
-func NewRedisCache(config RedisConfig) *RedisCache {
-	if config.Addr == "" {
-		config.Addr = "localhost:6379"
+// ApplyRedisDefaults returns a new RedisConfig with default values applied for any zero-valued fields.
+func ApplyRedisDefaults(config RedisConfig) RedisConfig {
+	if config.URL == "" {
+		config.URL = "redis://localhost:6379/0"
 	}
 	if config.Prefix == "" {
 		config.Prefix = "websurfer:"
 	}
-	if config.Config.TTL == 0 {
-		config.Config.TTL = DefaultConfig().TTL
-	}
-	if config.Config.StaleTime == 0 {
-		config.Config.StaleTime = DefaultConfig().StaleTime
-	}
-
-	client := redis.NewClient(&redis.Options{
-		Addr:     config.Addr,
-		Password: config.Password,
-		DB:       config.DB,
-	})
-
-	return &RedisCache{
-		client: client,
-		config: config.Config,
-		prefix: config.Prefix,
-	}
+	config.Config = ApplyDefaults(config.Config)
+	return config
 }
 
-// NewRedisCacheFromURL creates a new Redis cache from a Redis URL.
-func NewRedisCacheFromURL(redisURL string, prefix string, config Config) (*RedisCache, error) {
-	opts, err := redis.ParseURL(redisURL)
+// NewRedisCache creates a new Redis cache from the provided configuration.
+func NewRedisCache(config RedisConfig) (*RedisCache, error) {
+	config = ApplyRedisDefaults(config)
+
+	opts, err := redis.ParseURL(config.URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse redis URL: %w", err)
-	}
-
-	if prefix == "" {
-		prefix = "websurfer:"
-	}
-	if config.TTL == 0 {
-		config.TTL = DefaultConfig().TTL
-	}
-	if config.StaleTime == 0 {
-		config.StaleTime = DefaultConfig().StaleTime
 	}
 
 	client := redis.NewClient(opts)
 
 	return &RedisCache{
 		client: client,
-		config: config,
-		prefix: prefix,
+		config: config.Config,
+		prefix: config.Prefix,
 	}, nil
-}
-
-// NewRedisCacheWithClient creates a Redis cache with an existing client.
-func NewRedisCacheWithClient(client *redis.Client, prefix string, config Config) *RedisCache {
-	if prefix == "" {
-		prefix = "websurfer:"
-	}
-	if config.TTL == 0 {
-		config.TTL = DefaultConfig().TTL
-	}
-	if config.StaleTime == 0 {
-		config.StaleTime = DefaultConfig().StaleTime
-	}
-
-	return &RedisCache{
-		client: client,
-		config: config,
-		prefix: prefix,
-	}
 }
 
 // Get retrieves an entry from Redis.

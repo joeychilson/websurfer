@@ -25,18 +25,7 @@ type MemoryCache struct {
 
 // NewMemoryCache creates a new in-memory cache with automatic cleanup.
 func NewMemoryCache(config Config) *MemoryCache {
-	if config.TTL == 0 {
-		config.TTL = DefaultConfig().TTL
-	}
-	if config.StaleTime == 0 {
-		config.StaleTime = DefaultConfig().StaleTime
-	}
-	if config.CleanupInterval == 0 {
-		config.CleanupInterval = DefaultConfig().CleanupInterval
-	}
-	if config.MaxEntries == 0 {
-		config.MaxEntries = DefaultConfig().MaxEntries
-	}
+	config = ApplyDefaults(config)
 
 	mc := &MemoryCache{
 		entries: make(map[string]*list.Element),
