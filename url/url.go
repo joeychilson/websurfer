@@ -70,38 +70,6 @@ func Normalize(rawURL string) (string, error) {
 	return parsedURL.String(), nil
 }
 
-// Deduplicate removes duplicate URLs after normalization.
-func Deduplicate(urls []string) []string {
-	seen := make(map[string]bool)
-	result := make([]string, 0, len(urls))
-
-	for _, rawURL := range urls {
-		normalized, err := Normalize(rawURL)
-		if err != nil {
-			normalized = rawURL
-		}
-
-		if !seen[normalized] {
-			seen[normalized] = true
-			result = append(result, rawURL)
-		}
-	}
-
-	return result
-}
-
-// IsSame checks if two URLs are the same after normalization.
-func IsSame(url1, url2 string) bool {
-	normalized1, err1 := Normalize(url1)
-	normalized2, err2 := Normalize(url2)
-
-	if err1 != nil || err2 != nil {
-		return url1 == url2
-	}
-
-	return normalized1 == normalized2
-}
-
 // ParseAndValidate parses a URL string and validates it has a scheme and host.
 func ParseAndValidate(rawURL string) (*url.URL, error) {
 	if strings.TrimSpace(rawURL) == "" {
@@ -132,60 +100,55 @@ func ValidateExternal(rawURL string) (*url.URL, error) {
 		return nil, err
 	}
 
-	host, _, err := net.SplitHostPort(parsedURL.Host)
-	if err != nil {
-		host = parsedURL.Host
-	}
-
-	host = strings.Trim(host, "[]")
-
-	ip := net.ParseIP(host)
-	if ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() {
-			return nil, fmt.Errorf("requests to private IP addresses are not allowed")
-		}
-		return parsedURL, nil
-	}
-
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return parsedURL, nil
-	}
-
-	for _, resolvedIP := range ips {
-		if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() {
-			return nil, fmt.Errorf("url resolves to private IP address: %s", host)
-		}
+	if err := ValidateNotPrivate(parsedURL.Host); err != nil {
+		return nil, err
 	}
 
 	return parsedURL, nil
 }
 
-// IsSameDomain checks if two URLs belong to the same domain (ignoring www).
-func IsSameDomain(url1, url2 string) bool {
-	parsed1, err1 := url.Parse(url1)
-	parsed2, err2 := url.Parse(url2)
-
-	if err1 != nil || err2 != nil {
-		return false
+// ValidateNotPrivate checks if a host (hostname or hostname:port) resolves to a private or loopback IP address.
+func ValidateNotPrivate(host string) error {
+	hostname, _, err := net.SplitHostPort(host)
+	if err != nil {
+		hostname = host
 	}
 
-	host1 := strings.TrimPrefix(parsed1.Hostname(), "www.")
-	host2 := strings.TrimPrefix(parsed2.Hostname(), "www.")
+	hostname = strings.Trim(hostname, "[]")
 
-	return host1 == host2
+	if ip := net.ParseIP(hostname); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() {
+			return fmt.Errorf("requests to private IP addresses are not allowed: %s", hostname)
+		}
+		return nil
+	}
+
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		return nil
+	}
+
+	for _, resolvedIP := range ips {
+		if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() {
+			return fmt.Errorf("url resolves to private IP address: %s -> %s", hostname, resolvedIP.String())
+		}
+	}
+
+	return nil
 }
 
-// IsSameSubdomain checks if two URLs belong to the exact same subdomain.
-func IsSameSubdomain(url1, url2 string) bool {
-	parsed1, err1 := url.Parse(url1)
-	parsed2, err2 := url.Parse(url2)
-
-	if err1 != nil || err2 != nil {
-		return false
+// ExtractHost extracts the host (hostname:port or just hostname) from a URL string.
+func ExtractHost(urlStr string) (string, error) {
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return "", fmt.Errorf("invalid url: %w", err)
 	}
 
-	return parsed1.Hostname() == parsed2.Hostname()
+	if parsedURL.Host == "" {
+		return "", fmt.Errorf("url has no host: %s", urlStr)
+	}
+
+	return parsedURL.Host, nil
 }
 
 // IsSameBaseDomain checks if two URLs belong to the same base/root domain.

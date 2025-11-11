@@ -128,7 +128,7 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 		entry, err := c.cache.Get(ctx, urlStr)
 		if err != nil {
 			c.logger.Error("cache get failed", "url", urlStr, "error", err)
-			return nil, fmt.Errorf("cache get failed: %w", err)
+			entry = nil
 		}
 
 		if entry != nil {

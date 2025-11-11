@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/joeychilson/websurfer/config"
+	urlutil "github.com/joeychilson/websurfer/url"
 	"golang.org/x/time/rate"
 )
 
@@ -48,7 +48,7 @@ func (l *Limiter) Wait(ctx context.Context, urlStr string) error {
 		return nil
 	}
 
-	domain, err := extractDomain(urlStr)
+	domain, err := urlutil.ExtractHost(urlStr)
 	if err != nil {
 		return fmt.Errorf("failed to extract domain: %w", err)
 	}
@@ -68,7 +68,7 @@ func (l *Limiter) Release(urlStr string) {
 		return
 	}
 
-	domain, err := extractDomain(urlStr)
+	domain, err := urlutil.ExtractHost(urlStr)
 	if err != nil {
 		return
 	}
@@ -83,7 +83,7 @@ func (l *Limiter) UpdateRetryAfter(urlStr string, headers http.Header) {
 		return
 	}
 
-	domain, err := extractDomain(urlStr)
+	domain, err := urlutil.ExtractHost(urlStr)
 	if err != nil {
 		return
 	}
@@ -209,20 +209,6 @@ func (dl *domainLimiter) setRetryAfter(retryAfter time.Time) {
 	if retryAfter.After(dl.retryAfter) {
 		dl.retryAfter = retryAfter
 	}
-}
-
-// extractDomain extracts the domain from a URL.
-func extractDomain(urlStr string) (string, error) {
-	parsedURL, err := url.Parse(urlStr)
-	if err != nil {
-		return "", err
-	}
-
-	if parsedURL.Host == "" {
-		return "", fmt.Errorf("no host in URL: %s", urlStr)
-	}
-
-	return parsedURL.Host, nil
 }
 
 // parseRetryAfter parses a Retry-After header value.

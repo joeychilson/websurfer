@@ -34,15 +34,6 @@ type List struct {
 	CharEnd   int      `json:"char_end"`
 }
 
-// Extract generates an outline from content based on content type
-func Extract(content, contentType string) *Outline {
-	if isMarkdown(contentType) {
-		return extractMarkdown(content)
-	}
-
-	return &Outline{}
-}
-
 // ExtractBytes generates an outline from content bytes based on content type.
 func ExtractBytes(content []byte, contentType string) *Outline {
 	if isMarkdown(contentType) {

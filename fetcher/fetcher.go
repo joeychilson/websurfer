@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/joeychilson/websurfer/config"
+	urlutil "github.com/joeychilson/websurfer/url"
 )
 
 // Response represents the fetched webpage response.
@@ -46,26 +46,8 @@ type ssrfProtectedTransport struct {
 
 // RoundTrip validates that the destination IP is not private/internal before making the request.
 func (t *ssrfProtectedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	host, _, err := net.SplitHostPort(req.URL.Host)
-	if err != nil {
-		host = req.URL.Host
-	}
-
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() {
-			return nil, fmt.Errorf("requests to private IP addresses are not allowed: %s", host)
-		}
-	} else {
-		ips, err := net.LookupIP(host)
-		if err != nil {
-			return t.base.RoundTrip(req)
-		}
-
-		for _, resolvedIP := range ips {
-			if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() {
-				return nil, fmt.Errorf("url resolves to private IP address: %s -> %s", host, resolvedIP.String())
-			}
-		}
+	if err := urlutil.ValidateNotPrivate(req.URL.Host); err != nil {
+		return nil, err
 	}
 
 	return t.base.RoundTrip(req)

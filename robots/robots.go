@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/joeychilson/websurfer/cache"
+	urlutil "github.com/joeychilson/websurfer/url"
 )
 
 // Checker verifies if URLs can be crawled according to robots.txt rules.
@@ -57,12 +58,13 @@ func (c *Checker) IsAllowed(ctx context.Context, urlStr string) (bool, error) {
 		return false, fmt.Errorf("invalid url: %w", err)
 	}
 
-	if parsedURL.Host == "" {
-		return false, fmt.Errorf("url has no host: %s", urlStr)
+	host, err := urlutil.ExtractHost(urlStr)
+	if err != nil {
+		return false, err
 	}
 
-	robotsURL := fmt.Sprintf("%s://%s/robots.txt", parsedURL.Scheme, parsedURL.Host)
-	rules, err := c.getRules(ctx, robotsURL, parsedURL.Host)
+	robotsURL := fmt.Sprintf("%s://%s/robots.txt", parsedURL.Scheme, host)
+	rules, err := c.getRules(ctx, robotsURL, host)
 	if err != nil {
 		return true, nil
 	}
