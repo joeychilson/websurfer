@@ -83,11 +83,6 @@ func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 
 	optimizeHTML(doc)
 
-	var buf strings.Builder
-	if err := html.Render(&buf, doc); err != nil {
-		return nil, err
-	}
-
 	opts := []converter.ConvertOptionFunc{}
 	if urlStr != "" {
 		opts = append(opts, converter.WithDomain(urlStr))
@@ -100,12 +95,13 @@ func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 			table.NewTablePlugin(),
 		),
 	)
-	markdown, err := conv.ConvertString(buf.String(), opts...)
+
+	markdownBytes, err := conv.ConvertNode(doc, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return []byte(markdown), nil
+	return markdownBytes, nil
 }
 
 // createSanitizationPolicy creates a policy that keeps structural/semantic elements only.
