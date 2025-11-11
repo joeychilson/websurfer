@@ -117,6 +117,13 @@ func (c *Client) WithLogger(log *slog.Logger) *Client {
 	return c
 }
 
+// Close releases resources used by the client.
+func (c *Client) Close() {
+	if c.limiter != nil {
+		c.limiter.Close()
+	}
+}
+
 // Fetch retrieves content from the given URL, respecting robots.txt and rate limits.
 func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	c.logger.Debug("fetch started", "url", urlStr)

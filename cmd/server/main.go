@@ -60,6 +60,7 @@ func main() {
 	}
 
 	c = c.WithLogger(log)
+	defer c.Close()
 
 	if cfg.redisURL == "" {
 		log.Error("redis URL is required")

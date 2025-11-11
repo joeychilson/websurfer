@@ -126,7 +126,7 @@ func (l *Limiter) getLimiterForDomain(domain string) *domainLimiter {
 	return dl
 }
 
-// Close stops the cleanup goroutine.
+// Close stops the cleanup goroutine and releases resources.
 func (l *Limiter) Close() {
 	close(l.stopCh)
 }
