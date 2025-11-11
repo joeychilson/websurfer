@@ -49,7 +49,6 @@ func tokenize(text string) []string {
 }
 
 // isStopWord checks if a token is a common stop word
-// Minimal list - only remove the most common words
 func isStopWord(token string) bool {
 	stopWords := map[string]bool{
 		"the": true, "a": true, "an": true,

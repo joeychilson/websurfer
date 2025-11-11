@@ -4,6 +4,19 @@ import (
 	"github.com/joeychilson/websurfer/content"
 )
 
+// Navigation provides options for expanding or moving around search results
+type Navigation struct {
+	Current *content.RangeOptions `json:"current"`
+	Options []NavigationOption    `json:"options"`
+}
+
+// NavigationOption represents a single navigation action
+type NavigationOption struct {
+	ID          string                `json:"id"`
+	Range       *content.RangeOptions `json:"range"`
+	Description string                `json:"description"`
+}
+
 // Options contains search parameters
 type Options struct {
 	Query      string  `json:"query"`
@@ -24,11 +37,12 @@ type Result struct {
 
 // Match represents a single search result
 type Match struct {
-	Rank            int      `json:"rank"`
-	Score           float64  `json:"score"`
-	Location        Location `json:"location"`
-	Snippet         string   `json:"snippet"`
-	EstimatedTokens int      `json:"estimated_tokens"`
+	Rank            int         `json:"rank"`
+	Score           float64     `json:"score"`
+	Location        Location    `json:"location"`
+	Snippet         string      `json:"snippet"`
+	EstimatedTokens int         `json:"estimated_tokens"`
+	Navigation      *Navigation `json:"navigation,omitempty"`
 }
 
 // Location describes where the match was found
@@ -49,7 +63,7 @@ type Continuation struct {
 // Search performs window-based search on content and returns ranked results
 func Search(contentText, contentType string, opts Options) (*Result, error) {
 	if opts.WindowSize == 0 {
-		opts.WindowSize = 2000
+		opts.WindowSize = 10000
 	}
 	if opts.MaxResults == 0 {
 		opts.MaxResults = 10
@@ -101,6 +115,7 @@ func Search(contentText, contentType string, opts Options) (*Result, error) {
 		windows = windows[:opts.MaxResults]
 	}
 
+	contentLen := len(contentText)
 	results := make([]Match, len(windows))
 	for i, window := range windows {
 		if window.Content == "" {
@@ -112,7 +127,7 @@ func Search(contentText, contentType string, opts Options) (*Result, error) {
 			snippet = highlightMatches(snippet, queryTokens)
 		}
 
-		estimatedTokens := estimateTokens(snippet, contentType)
+		estimatedTokens := content.EstimateTokens(snippet, contentType)
 
 		results[i] = Match{
 			Rank:  i + 1,
@@ -125,6 +140,7 @@ func Search(contentText, contentType string, opts Options) (*Result, error) {
 			},
 			Snippet:         snippet,
 			EstimatedTokens: estimatedTokens,
+			Navigation:      buildNavigation(window.Start, window.End, contentLen, opts.WindowSize),
 		}
 	}
 
@@ -136,6 +152,58 @@ func Search(contentText, contentType string, opts Options) (*Result, error) {
 	}, nil
 }
 
-func estimateTokens(text, contentType string) int {
-	return content.EstimateTokens(text, contentType)
+// buildNavigation creates navigation options for a window
+func buildNavigation(start, end, totalLength, windowSize int) *Navigation {
+	nav := &Navigation{
+		Current: &content.RangeOptions{
+			Type:  "chars",
+			Start: start,
+			End:   end,
+		},
+		Options: []NavigationOption{},
+	}
+
+	expandAmount := windowSize
+
+	if start > 0 {
+		expandStart := max(0, start-expandAmount)
+		nav.Options = append(nav.Options, NavigationOption{
+			ID: "expand_up",
+			Range: &content.RangeOptions{
+				Type:  "chars",
+				Start: expandStart,
+				End:   end,
+			},
+			Description: "Expand window to include content above",
+		})
+	}
+
+	if end < totalLength {
+		expandEnd := min(totalLength, end+expandAmount)
+		nav.Options = append(nav.Options, NavigationOption{
+			ID: "expand_down",
+			Range: &content.RangeOptions{
+				Type:  "chars",
+				Start: start,
+				End:   expandEnd,
+			},
+			Description: "Expand window to include content below",
+		})
+	}
+
+	if start > 0 || end < totalLength {
+		expandStart := max(0, start-expandAmount)
+		expandEnd := min(totalLength, end+expandAmount)
+		nav.Options = append(nav.Options, NavigationOption{
+			ID: "expand_both",
+			Range: &content.RangeOptions{
+				Type:  "chars",
+				Start: expandStart,
+				End:   expandEnd,
+			},
+			Description: "Expand window in both directions",
+		})
+	}
+
+	return nav
 }

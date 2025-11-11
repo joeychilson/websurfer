@@ -87,8 +87,8 @@ func createWindows(content string, matches []MatchPosition, windowSize int) []Wi
 			}
 		}
 
-		lineStart := countLines(content[:start])
-		lineEnd := countLines(content[:end])
+		lineStart := strings.Count(content[:start], "\n")
+		lineEnd := strings.Count(content[:end], "\n")
 
 		windows = append(windows, Window{
 			Start:     start,
@@ -195,7 +195,27 @@ func scoreWindows(windows []Window, queryTokens []string) {
 			proximityBoost = float64(phraseCount) * 50.0
 		}
 
-		window.Score = density + coverageBoost + proximityBoost
+		contentBoost := 0.0
+		if windowSize > 1000 {
+			contentBoost = 5.0
+		}
+		if windowSize > 3000 {
+			contentBoost = 10.0
+		}
+
+		structureBoost := 0.0
+		contentLower := strings.ToLower(window.Content)
+		if strings.Contains(contentLower, "<table") {
+			structureBoost += 20.0
+		}
+		if strings.Contains(contentLower, "<tbody") || strings.Contains(contentLower, "<thead") {
+			structureBoost += 10.0
+		}
+		if strings.Contains(contentLower, "<ul") || strings.Contains(contentLower, "<ol") {
+			structureBoost += 5.0
+		}
+
+		window.Score = density + coverageBoost + proximityBoost + contentBoost + structureBoost
 	}
 
 	sort.Slice(windows, func(i, j int) bool {
@@ -230,9 +250,4 @@ func mergeOverlappingWindows(windows []Window) []Window {
 	}
 
 	return merged
-}
-
-// countLines counts the number of newlines before position
-func countLines(text string) int {
-	return strings.Count(text, "\n")
 }

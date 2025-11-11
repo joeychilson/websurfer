@@ -41,10 +41,10 @@ type Metadata struct {
 
 // FetchResponse represents the response from a fetch request.
 type FetchResponse struct {
-	Metadata      Metadata              `json:"metadata"`
-	Content       string                `json:"content,omitempty"`
-	SearchResults *search.Result        `json:"search_results,omitempty"`
-	NextRange     *content.RangeOptions `json:"next_range,omitempty"`
+	Metadata      Metadata           `json:"metadata"`
+	Content       string             `json:"content,omitempty"`
+	SearchResults *search.Result     `json:"search_results,omitempty"`
+	Navigation    *search.Navigation `json:"navigation,omitempty"`
 }
 
 // ErrorResponse represents an error.
@@ -160,10 +160,20 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 		truncation := content.Truncate(workingText, contentType, req.MaxTokens)
 
 		metadata := buildFetchMetadata(fetched, contentType, language, lastModified, truncation.ReturnedTokens)
+
+		start := 0
+		if req.Range != nil {
+			start = req.Range.Start
+		}
+		end := truncation.ReturnedChars
+		if req.Range != nil {
+			end = req.Range.Start + truncation.ReturnedChars
+		}
+
 		response := &FetchResponse{
-			Metadata:  metadata,
-			Content:   truncation.Content,
-			NextRange: nextRangeForTruncation(truncation),
+			Metadata:   metadata,
+			Content:    truncation.Content,
+			Navigation: buildNavigationForContent(start, end, len(bodyText), req.MaxTokens),
 		}
 
 		return response, nil
@@ -173,9 +183,18 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 
 	metadata := buildFetchMetadata(fetched, contentType, language, lastModified, estimatedTokens)
 
+	// Build navigation for full content
+	start := 0
+	end := len(workingText)
+	if req.Range != nil {
+		start = req.Range.Start
+		end = req.Range.End
+	}
+
 	return &FetchResponse{
-		Metadata: metadata,
-		Content:  workingText,
+		Metadata:   metadata,
+		Content:    workingText,
+		Navigation: buildNavigationForContent(start, end, len(bodyText), 0),
 	}, nil
 }
 
@@ -199,22 +218,75 @@ func buildFetchMetadata(resp *client.Response, contentType, language, lastModifi
 	return metadata
 }
 
-func nextRangeForTruncation(result *content.TruncateResult) *content.RangeOptions {
-	if result == nil || !result.Truncated {
-		return nil
+func buildNavigationForContent(start, end, totalLength, maxTokens int) *search.Navigation {
+	nav := &search.Navigation{
+		Current: &content.RangeOptions{
+			Type:  "chars",
+			Start: start,
+			End:   end,
+		},
+		Options: []search.NavigationOption{},
 	}
 
-	nextStart := result.ReturnedChars
-	if nextStart >= result.TotalChars {
-		return nil
+	chunkSize := end - start
+	if maxTokens > 0 {
+		chunkSize = end - start
+	} else if chunkSize == 0 {
+		chunkSize = 50000
 	}
 
-	nextEnd := min(result.TotalChars, nextStart+result.ReturnedChars)
-	return &content.RangeOptions{
-		Type:  "chars",
-		Start: nextStart,
-		End:   nextEnd,
+	if start > 0 {
+		prevStart := max(0, start-chunkSize)
+		nav.Options = append(nav.Options, search.NavigationOption{
+			ID: "previous",
+			Range: &content.RangeOptions{
+				Type:  "chars",
+				Start: prevStart,
+				End:   start,
+			},
+			Description: "Get previous chunk of content",
+		})
 	}
+
+	if end < totalLength {
+		nextEnd := min(totalLength, end+chunkSize)
+		nav.Options = append(nav.Options, search.NavigationOption{
+			ID: "next",
+			Range: &content.RangeOptions{
+				Type:  "chars",
+				Start: end,
+				End:   nextEnd,
+			},
+			Description: "Get next chunk of content",
+		})
+	}
+
+	if end < totalLength {
+		expandEnd := min(totalLength, end+chunkSize)
+		nav.Options = append(nav.Options, search.NavigationOption{
+			ID: "expand_forward",
+			Range: &content.RangeOptions{
+				Type:  "chars",
+				Start: start,
+				End:   expandEnd,
+			},
+			Description: "Expand current view to include more content",
+		})
+	}
+
+	if start > 0 || end < totalLength {
+		nav.Options = append(nav.Options, search.NavigationOption{
+			ID: "full",
+			Range: &content.RangeOptions{
+				Type:  "chars",
+				Start: 0,
+				End:   totalLength,
+			},
+			Description: "Get entire document (warning: may be very large)",
+		})
+	}
+
+	return nav
 }
 
 func firstHeader(headers map[string][]string, key string) string {
@@ -224,7 +296,6 @@ func firstHeader(headers map[string][]string, key string) string {
 	return ""
 }
 
-// validateRequest validates the fetch request.
 func (h *Handler) validateRequest(req *FetchRequest) error {
 	if req == nil {
 		return fmt.Errorf("request cannot be nil")
@@ -268,7 +339,6 @@ func (h *Handler) validateRequest(req *FetchRequest) error {
 	return nil
 }
 
-// parseAndValidateExternalURL parses and validates an external URL.
 func (h *Handler) parseAndValidateExternalURL(raw string) (*url.URL, error) {
 	if err := urlpkg.ValidateExternal(raw); err != nil {
 		return nil, err
@@ -276,7 +346,6 @@ func (h *Handler) parseAndValidateExternalURL(raw string) (*url.URL, error) {
 	return urlpkg.ParseAndValidate(raw)
 }
 
-// sendJSON sends a JSON response.
 func (h *Handler) sendJSON(w http.ResponseWriter, data interface{}, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -288,7 +357,6 @@ func (h *Handler) sendJSON(w http.ResponseWriter, data interface{}, statusCode i
 	}
 }
 
-// sendError sends an error response.
 func (h *Handler) sendError(w http.ResponseWriter, message string, statusCode int) {
 	errResp := ErrorResponse{
 		Error:      message,
@@ -297,9 +365,6 @@ func (h *Handler) sendError(w http.ResponseWriter, message string, statusCode in
 	h.sendJSON(w, errResp, statusCode)
 }
 
-// extractLanguage extracts the language code from HTML's lang attribute.
-// It looks for the lang attribute on the <html> tag and returns the primary language code.
-// For example: "en-US" becomes "en", "fr" remains "fr".
 func extractLanguage(htmlContent string) string {
 	langRegex := regexp.MustCompile(`(?i)<html[^>]+lang=["']([^"']+)["']`)
 	matches := langRegex.FindStringSubmatch(htmlContent)
