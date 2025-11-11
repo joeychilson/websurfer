@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -33,12 +31,13 @@ type appConfig struct {
 }
 
 func main() {
-	cfg := parseFlags()
+	cfg := loadConfig()
 
 	log := setupLogger(cfg.logLevel)
 	log.Info("starting websurfer API server",
 		"addr", cfg.addr,
-		"log_level", cfg.logLevel)
+		"log_level", cfg.logLevel,
+		"redis_url", cfg.redisURL)
 
 	var c *client.Client
 	var err error
@@ -135,36 +134,13 @@ func main() {
 	log.Info("server shutdown complete")
 }
 
-func parseFlags() *appConfig {
-	cfg := &appConfig{}
-
-	flag.StringVar(&cfg.addr, "addr", getEnv("ADDR", defaultAddr),
-		"HTTP server address")
-	flag.StringVar(&cfg.configFile, "config", getEnv("CONFIG_FILE", defaultConfigFile),
-		"Path to config file (optional)")
-	flag.StringVar(&cfg.redisURL, "redis-url", getEnv("REDIS_URL", defaultRedisURL),
-		"Redis URL (required)")
-	flag.StringVar(&cfg.logLevel, "log-level", getEnv("LOG_LEVEL", defaultLogLevel),
-		"Log level: debug, info, warn, error")
-
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS]\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "WebSurfer API Server - LLM-optimized web scraping API\n\n")
-		fmt.Fprintf(os.Stderr, "Options:\n")
-		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
-		fmt.Fprintf(os.Stderr, "  ADDR          HTTP server address (default: %s)\n", defaultAddr)
-		fmt.Fprintf(os.Stderr, "  CONFIG_FILE   Path to config file (default: %s)\n", defaultConfigFile)
-		fmt.Fprintf(os.Stderr, "  REDIS_URL     Redis URL for cache and rate limiting (required)\n")
-		fmt.Fprintf(os.Stderr, "  LOG_LEVEL     Log level: debug, info, warn, error (default: %s)\n", defaultLogLevel)
-		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  %s\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -addr :3000 -redis-url redis://localhost:6379/0\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -config config.yaml -log-level debug\n", os.Args[0])
+func loadConfig() *appConfig {
+	return &appConfig{
+		addr:       getEnv("ADDR", defaultAddr),
+		configFile: getEnv("CONFIG_FILE", defaultConfigFile),
+		redisURL:   getEnv("REDIS_URL", defaultRedisURL),
+		logLevel:   getEnv("LOG_LEVEL", defaultLogLevel),
 	}
-
-	flag.Parse()
-	return cfg
 }
 
 func setupLogger(level string) *slog.Logger {
