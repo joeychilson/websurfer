@@ -44,6 +44,15 @@ func Extract(content, contentType string) *Outline {
 	return &Outline{}
 }
 
+// ExtractBytes generates an outline from content bytes based on content type.
+func ExtractBytes(content []byte, contentType string) *Outline {
+	if isMarkdown(contentType) {
+		return extractMarkdown(string(content))
+	}
+
+	return &Outline{}
+}
+
 func isMarkdown(contentType string) bool {
 	return strings.Contains(contentType, "markdown") ||
 		strings.Contains(contentType, "text/markdown") ||

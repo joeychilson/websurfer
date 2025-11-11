@@ -87,17 +87,17 @@ func (mc *MemoryCache) Set(ctx context.Context, entry *Entry) error {
 	}
 
 	entryCopy := &Entry{
-		URL:         entry.URL,
-		StatusCode:  entry.StatusCode,
-		Headers:     copyHeaders(entry.Headers),
-		Body:        make([]byte, len(entry.Body)),
-		Title:       entry.Title,
-		Description: entry.Description,
-		StoredAt:    entry.StoredAt,
-		TTL:         entry.TTL,
-		StaleTime:   entry.StaleTime,
+		URL:          entry.URL,
+		StatusCode:   entry.StatusCode,
+		Headers:      entry.Headers,
+		Body:         entry.Body,
+		Title:        entry.Title,
+		Description:  entry.Description,
+		LastModified: entry.LastModified,
+		StoredAt:     entry.StoredAt,
+		TTL:          entry.TTL,
+		StaleTime:    entry.StaleTime,
 	}
-	copy(entryCopy.Body, entry.Body)
 
 	if elem, exists := mc.entries[entry.URL]; exists {
 		lruEnt := elem.Value.(*lruEntry)
@@ -187,19 +187,4 @@ func (mc *MemoryCache) removeExpired() {
 		delete(mc.entries, lruEnt.key)
 		mc.lruList.Remove(elem)
 	}
-}
-
-// copyHeaders creates a deep copy of HTTP headers.
-func copyHeaders(headers map[string][]string) map[string][]string {
-	if headers == nil {
-		return nil
-	}
-
-	headersCopy := make(map[string][]string, len(headers))
-	for key, values := range headers {
-		valuesCopy := make([]string, len(values))
-		copy(valuesCopy, values)
-		headersCopy[key] = valuesCopy
-	}
-	return headersCopy
 }

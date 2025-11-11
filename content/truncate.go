@@ -1,6 +1,7 @@
 package content
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/joeychilson/websurfer/parser"
@@ -75,9 +76,58 @@ func Truncate(content string, contentType string, maxTokens int) *TruncateResult
 	}
 }
 
+// TruncateBytes truncates content to fit within maxTokens using smart boundaries.
+func TruncateBytes(content []byte, contentType string, maxTokens int) *TruncateResult {
+	totalChars := len(content)
+	totalTokens := EstimateTokensBytes(content, contentType)
+
+	if totalTokens <= maxTokens {
+		return &TruncateResult{
+			Content:        string(content),
+			Truncated:      false,
+			ReturnedChars:  totalChars,
+			ReturnedTokens: totalTokens,
+			TotalChars:     totalChars,
+			TotalTokens:    totalTokens,
+		}
+	}
+
+	targetChars := charsForTokens(maxTokens, contentType)
+
+	truncateAt := findTruncationPointBytes(content, contentType, targetChars)
+
+	truncated := content[:truncateAt]
+	returnedTokens := EstimateTokensBytes(truncated, contentType)
+
+	return &TruncateResult{
+		Content:        string(truncated),
+		Truncated:      true,
+		ReturnedChars:  truncateAt,
+		ReturnedTokens: returnedTokens,
+		TotalChars:     totalChars,
+		TotalTokens:    totalTokens,
+	}
+}
+
 // EstimateTokens estimates the number of tokens for given content.
 func EstimateTokens(content string, contentType string) int {
 	if content == "" {
+		return 0
+	}
+
+	ct := parser.NormalizeContentType(contentType)
+
+	ratio, exists := charsPerTokenRatios[ct]
+	if !exists {
+		ratio = charsPerTokenRatios["default"]
+	}
+
+	return int(float64(len(content)) / ratio)
+}
+
+// EstimateTokensBytes estimates the number of tokens for given content as bytes.
+func EstimateTokensBytes(content []byte, contentType string) int {
+	if len(content) == 0 {
 		return 0
 	}
 
@@ -171,4 +221,69 @@ func findWordBoundary(content string, targetChars int) int {
 // isWhitespace checks if a character is whitespace.
 func isWhitespace(ch byte) bool {
 	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+}
+
+// findTruncationPointBytes finds a smart boundary to truncate at for bytes.
+func findTruncationPointBytes(content []byte, contentType string, targetChars int) int {
+	if targetChars >= len(content) {
+		return len(content)
+	}
+
+	ct := parser.NormalizeContentType(contentType)
+	if strings.HasPrefix(ct, "text/html") ||
+		strings.HasPrefix(ct, "application/xhtml") {
+		return findHTMLBoundaryBytes(content, targetChars)
+	}
+
+	return findWordBoundaryBytes(content, targetChars)
+}
+
+// findHTMLBoundaryBytes finds a good HTML truncation point near targetChars for bytes.
+func findHTMLBoundaryBytes(content []byte, targetChars int) int {
+	window := targetChars / htmlBoundaryWindowDivisor
+	searchStart := max(0, targetChars-window)
+	searchEnd := min(len(content), targetChars+window)
+
+	preferredTags := [][]byte{
+		[]byte("</article>"), []byte("</section>"), []byte("</div>"), []byte("</main>"),
+		[]byte("</header>"), []byte("</footer>"), []byte("</nav>"), []byte("</aside>"),
+		[]byte("</p>"), []byte("</li>"), []byte("</tr>"), []byte("</h1>"), []byte("</h2>"), []byte("</h3>"),
+		[]byte("</h4>"), []byte("</h5>"), []byte("</h6>"), []byte("</blockquote>"), []byte("</pre>"),
+	}
+
+	bestPos := -1
+	for _, tag := range preferredTags {
+		pos := bytes.LastIndex(content[searchStart:searchEnd], tag)
+		if pos != -1 {
+			absPos := searchStart + pos + len(tag)
+			if absPos > bestPos {
+				bestPos = absPos
+			}
+		}
+	}
+
+	if bestPos != -1 {
+		return bestPos
+	}
+
+	pos := bytes.LastIndexByte(content[:searchEnd], '>')
+	if pos != -1 && pos > searchStart {
+		return pos + 1
+	}
+
+	return findWordBoundaryBytes(content, targetChars)
+}
+
+// findWordBoundaryBytes finds a word boundary near targetChars for bytes.
+func findWordBoundaryBytes(content []byte, targetChars int) int {
+	window := targetChars / wordBoundaryWindowDivisor
+	searchStart := max(0, targetChars-window)
+
+	for i := targetChars; i >= searchStart; i-- {
+		if i < len(content) && isWhitespace(content[i]) {
+			return i
+		}
+	}
+
+	return min(targetChars, len(content))
 }

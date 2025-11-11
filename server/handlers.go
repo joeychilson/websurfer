@@ -119,26 +119,25 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 		return nil, fmt.Errorf("fetch failed: %w", err)
 	}
 
-	bodyText := string(fetched.Body)
+	workingBytes := fetched.Body
 	contentType := firstHeader(fetched.Headers, "Content-Type")
 	lastModified := firstHeader(fetched.Headers, "Last-Modified")
 
 	language := ""
 	if strings.Contains(strings.ToLower(contentType), "html") {
-		language = extractLanguage(bodyText)
+		language = extractLanguage(string(fetched.Body))
 	}
 
-	workingText := bodyText
 	if req.Range != nil {
-		extracted, err := content.ExtractRange(workingText, req.Range)
+		extracted, err := content.ExtractRangeBytes(workingBytes, req.Range)
 		if err != nil {
 			return nil, fmt.Errorf("range extraction failed: %w", err)
 		}
-		workingText = extracted
+		workingBytes = extracted
 	}
 
 	if req.MaxTokens > 0 {
-		truncation := content.Truncate(workingText, contentType, req.MaxTokens)
+		truncation := content.TruncateBytes(workingBytes, contentType, req.MaxTokens)
 
 		metadata := buildFetchMetadata(fetched, contentType, language, lastModified, truncation.ReturnedTokens)
 
@@ -154,22 +153,20 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 		response := &FetchResponse{
 			Metadata:   metadata,
 			Content:    truncation.Content,
-			Navigation: buildNavigationForContent(start, end, len(bodyText), req.MaxTokens),
+			Navigation: buildNavigationForContent(start, end, len(fetched.Body), req.MaxTokens),
 		}
 
 		return response, nil
 	}
 
-	estimatedTokens := content.EstimateTokens(workingText, contentType)
+	estimatedTokens := content.EstimateTokensBytes(workingBytes, contentType)
 
 	metadata := buildFetchMetadata(fetched, contentType, language, lastModified, estimatedTokens)
 
-	// Extract outline from the markdown/text content (not original HTML)
-	// HTML parser now returns markdown, so outline should be based on that
-	documentOutline := outline.Extract(workingText, "text/markdown")
+	documentOutline := outline.ExtractBytes(workingBytes, "text/markdown")
 
 	start := 0
-	end := len(workingText)
+	end := len(workingBytes)
 	if req.Range != nil {
 		start = req.Range.Start
 		end = req.Range.End
@@ -177,9 +174,9 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 
 	return &FetchResponse{
 		Metadata:   metadata,
-		Content:    workingText,
+		Content:    string(workingBytes),
 		Outline:    documentOutline,
-		Navigation: buildNavigationForContent(start, end, len(workingText), 0),
+		Navigation: buildNavigationForContent(start, end, len(workingBytes), 0),
 	}, nil
 }
 

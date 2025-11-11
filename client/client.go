@@ -171,8 +171,19 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 							}
 						} else if err == nil && newEntry == nil {
 							c.logger.Debug("background refresh: content not modified", "url", urlStr)
-							entry.StoredAt = time.Now()
-							if err := c.cache.Set(refreshCtx, entry); err != nil {
+							updatedEntry := &cache.Entry{
+								URL:          entry.URL,
+								StatusCode:   entry.StatusCode,
+								Headers:      entry.Headers,
+								Body:         entry.Body,
+								Title:        entry.Title,
+								Description:  entry.Description,
+								LastModified: entry.LastModified,
+								StoredAt:     time.Now(),
+								TTL:          entry.TTL,
+								StaleTime:    entry.StaleTime,
+							}
+							if err := c.cache.Set(refreshCtx, updatedEntry); err != nil {
 								c.logger.Error("background refresh timestamp update failed", "url", urlStr, "error", err)
 							} else {
 								c.logger.Debug("background refresh completed (not modified)", "url", urlStr)
