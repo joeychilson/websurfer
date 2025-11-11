@@ -64,8 +64,6 @@ func New(cfg *config.Config) (*Client, error) {
 
 	robotsCacheTTL := cfg.Default.Fetch.GetRobotsTxtCacheTTL()
 
-	defaultCache := cache.NewMemoryCache(cache.DefaultConfig())
-
 	limiterConfig := cfg.Default.RateLimit
 	limiterConfig.RespectRetryAfter = true
 	limiter := ratelimit.New(limiterConfig)
@@ -87,10 +85,10 @@ func New(cfg *config.Config) (*Client, error) {
 
 	return &Client{
 		config:         cfg,
-		robotsChecker:  robots.New(userAgent, robotsCacheTTL, defaultCache, robotsClient),
+		robotsChecker:  robots.New(userAgent, robotsCacheTTL, robotsClient),
 		limiter:        limiter,
 		parser:         parserRegistry,
-		cache:          defaultCache,
+		cache:          nil,
 		logger:         slog.Default(),
 		userAgent:      userAgent,
 		robotsCacheTTL: robotsCacheTTL,
@@ -107,10 +105,9 @@ func NewFromFile(path string) (*Client, error) {
 	return New(cfg)
 }
 
-// WithCache sets the cache for the client and updates robots checker to use the same cache.
-func (c *Client) WithCache(sharedCache cache.Cache) *Client {
-	c.cache = sharedCache
-	c.robotsChecker = robots.New(c.userAgent, c.robotsCacheTTL, sharedCache, nil)
+// WithCache sets the cache for response caching.
+func (c *Client) WithCache(responseCache cache.Cache) *Client {
+	c.cache = responseCache
 	return c
 }
 
@@ -259,14 +256,6 @@ func (c *Client) FetchNoCache(ctx context.Context, urlStr string) (*Response, er
 		CacheState:  "miss",
 		CachedAt:    time.Time{},
 	}, nil
-}
-
-// Close releases resources held by the client.
-func (c *Client) Close() error {
-	if c.cache != nil {
-		return c.cache.Close()
-	}
-	return nil
 }
 
 // fetchAndCache performs the actual fetch operation with all protections.

@@ -1,19 +1,20 @@
 package server
 
 import (
-	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httplog/v3"
 	"github.com/joeychilson/websurfer/client"
+	"github.com/redis/go-redis/v9"
 )
 
 // ServerConfig holds configuration for the API server.
 type ServerConfig struct {
-	RedisURL          string
+	RedisClient       *redis.Client
 	RateLimitRequests int
 	RateLimitWindow   time.Duration
 }
@@ -22,11 +23,11 @@ type ServerConfig struct {
 type Server struct {
 	client      *client.Client
 	logger      *slog.Logger
-	rateLimiter *RateLimiter
+	rateLimiter func(next http.Handler) http.Handler
 }
 
 // New creates a new API server instance.
-func New(c *client.Client, log *slog.Logger, cfg *ServerConfig) (*Server, error) {
+func New(c *client.Client, log *slog.Logger, cfg *ServerConfig) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -45,18 +46,15 @@ func New(c *client.Client, log *slog.Logger, cfg *ServerConfig) (*Server, error)
 	rateLimitConfig := RateLimitConfig{
 		RequestLimit:   cfg.RateLimitRequests,
 		WindowDuration: cfg.RateLimitWindow,
-		RedisURL:       cfg.RedisURL,
+		RedisClient:    cfg.RedisClient,
 	}
-	rateLimiter, err := RateLimit(rateLimitConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
-	}
+	rateLimiter := RateLimit(rateLimitConfig)
 
 	return &Server{
 		client:      c,
 		logger:      log,
 		rateLimiter: rateLimiter,
-	}, nil
+	}
 }
 
 // Router returns a configured chi.Mux with all routes and middleware.
@@ -69,18 +67,10 @@ func (s *Server) Router() chi.Router {
 		Level:         slog.LevelInfo,
 		RecoverPanics: true,
 	}))
-	r.Use(s.rateLimiter.Handler)
+	r.Use(s.rateLimiter)
 
 	r.Post("/v1/fetch", s.handleFetch)
 	r.Get("/health", s.handleHealth)
 
 	return r
-}
-
-// Close releases resources held by the server (e.g., Redis connections).
-func (s *Server) Close() error {
-	if s.rateLimiter != nil {
-		return s.rateLimiter.Close()
-	}
-	return nil
 }

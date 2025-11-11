@@ -17,16 +17,12 @@ type RedisCache struct {
 
 // RedisConfig holds Redis-specific configuration.
 type RedisConfig struct {
-	URL    string
 	Prefix string
 	Config Config
 }
 
 // ApplyRedisDefaults returns a new RedisConfig with default values applied for any zero-valued fields.
 func ApplyRedisDefaults(config RedisConfig) RedisConfig {
-	if config.URL == "" {
-		config.URL = "redis://localhost:6379/0"
-	}
 	if config.Prefix == "" {
 		config.Prefix = "websurfer:"
 	}
@@ -34,22 +30,15 @@ func ApplyRedisDefaults(config RedisConfig) RedisConfig {
 	return config
 }
 
-// NewRedisCache creates a new Redis cache from the provided configuration.
-func NewRedisCache(config RedisConfig) (*RedisCache, error) {
+// NewRedisCache creates a new Redis cache with the provided client and configuration.
+func NewRedisCache(client *redis.Client, config RedisConfig) *RedisCache {
 	config = ApplyRedisDefaults(config)
-
-	opts, err := redis.ParseURL(config.URL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse redis URL: %w", err)
-	}
-
-	client := redis.NewClient(opts)
 
 	return &RedisCache{
 		client: client,
 		config: config.Config,
 		prefix: config.Prefix,
-	}, nil
+	}
 }
 
 // Get retrieves an entry from Redis.
@@ -129,11 +118,6 @@ func (rc *RedisCache) Clear(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// Close closes the Redis connection.
-func (rc *RedisCache) Close() error {
-	return rc.client.Close()
 }
 
 // makeKey creates a Redis key with the configured prefix.

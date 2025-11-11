@@ -41,7 +41,6 @@ type Cache interface {
 	Set(ctx context.Context, entry *Entry) error
 	Delete(ctx context.Context, url string) error
 	Clear(ctx context.Context) error
-	Close() error
 }
 
 // Config holds cache configuration.

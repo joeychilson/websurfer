@@ -3,29 +3,29 @@ package robots
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/joeychilson/websurfer/cache"
 	urlutil "github.com/joeychilson/websurfer/url"
 )
 
 // Checker verifies if URLs can be crawled according to robots.txt rules.
 type Checker struct {
 	userAgent string
-	cacheTTL  time.Duration
-	cache     cache.Cache
 	client    *http.Client
+	cache     sync.Map
+	cacheTTL  time.Duration
 }
 
-// cachedRobots holds parsed robots.txt data.
+// cachedRobots holds parsed robots.txt data with expiration.
 type cachedRobots struct {
-	Rules      *Rules        `json:"rules"`
-	CrawlDelay time.Duration `json:"crawl_delay"`
+	Rules      *Rules
+	CrawlDelay time.Duration
+	ExpiresAt  time.Time
 }
 
 // Rules represents parsed robots.txt rules for a specific user agent.
@@ -35,8 +35,8 @@ type Rules struct {
 	Allows    []string `json:"allows"`
 }
 
-// New creates a new robots.txt checker with the given user agent, cache TTL, and cache backend.
-func New(userAgent string, cacheTTL time.Duration, robotsCache cache.Cache, client *http.Client) *Checker {
+// New creates a new robots.txt checker with the given user agent and cache TTL.
+func New(userAgent string, cacheTTL time.Duration, client *http.Client) *Checker {
 	if client == nil {
 		client = &http.Client{
 			Timeout: 10 * time.Second,
@@ -45,9 +45,8 @@ func New(userAgent string, cacheTTL time.Duration, robotsCache cache.Cache, clie
 
 	return &Checker{
 		userAgent: userAgent,
-		cacheTTL:  cacheTTL,
-		cache:     robotsCache,
 		client:    client,
+		cacheTTL:  cacheTTL,
 	}
 }
 
@@ -93,7 +92,7 @@ func (c *Checker) GetCrawlDelay(ctx context.Context, urlStr string) (time.Durati
 	}
 
 	robotsURL := fmt.Sprintf("%s://%s/robots.txt", parsedURL.Scheme, parsedURL.Host)
-	cached, err := c.getCachedRobots(ctx, parsedURL.Host)
+	cached, err := c.getCachedRobots(parsedURL.Host)
 	if err == nil && cached != nil {
 		return cached.CrawlDelay, nil
 	}
@@ -103,7 +102,7 @@ func (c *Checker) GetCrawlDelay(ctx context.Context, urlStr string) (time.Durati
 		return 0, nil
 	}
 
-	cached, err = c.getCachedRobots(ctx, parsedURL.Host)
+	cached, err = c.getCachedRobots(parsedURL.Host)
 	if err == nil && cached != nil {
 		return cached.CrawlDelay, nil
 	}
@@ -113,7 +112,7 @@ func (c *Checker) GetCrawlDelay(ctx context.Context, urlStr string) (time.Durati
 
 // getRules retrieves robots.txt rules for a domain, using cache if valid.
 func (c *Checker) getRules(ctx context.Context, robotsURL, host string) (*Rules, error) {
-	cached, err := c.getCachedRobots(ctx, host)
+	cached, err := c.getCachedRobots(host)
 	if err == nil && cached != nil && cached.Rules != nil {
 		return cached.Rules, nil
 	}
@@ -123,51 +122,30 @@ func (c *Checker) getRules(ctx context.Context, robotsURL, host string) (*Rules,
 		return nil, err
 	}
 
-	err = c.setCachedRobots(ctx, host, &cachedRobots{
+	c.cache.Store(host, &cachedRobots{
 		Rules:      rules,
 		CrawlDelay: crawlDelay,
+		ExpiresAt:  time.Now().Add(c.cacheTTL),
 	})
-	if err != nil {
-		return rules, nil
-	}
 
 	return rules, nil
 }
 
-// getCachedRobots retrieves cached robots.txt data from the cache.
-func (c *Checker) getCachedRobots(ctx context.Context, host string) (*cachedRobots, error) {
-	cacheKey := "robots:" + host
-	entry, err := c.cache.Get(ctx, cacheKey)
-	if err != nil || entry == nil {
-		return nil, err
+// getCachedRobots retrieves cached robots.txt data from the in-memory cache.
+func (c *Checker) getCachedRobots(host string) (*cachedRobots, error) {
+	val, ok := c.cache.Load(host)
+	if !ok {
+		return nil, nil
 	}
 
-	var cached cachedRobots
-	if err := json.Unmarshal(entry.Body, &cached); err != nil {
-		return nil, err
+	cached := val.(*cachedRobots)
+
+	if time.Now().After(cached.ExpiresAt) {
+		c.cache.Delete(host)
+		return nil, nil
 	}
 
-	return &cached, nil
-}
-
-// setCachedRobots stores robots.txt data in the cache with TTL.
-func (c *Checker) setCachedRobots(ctx context.Context, host string, data *cachedRobots) error {
-	cacheKey := "robots:" + host
-
-	body, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-
-	entry := &cache.Entry{
-		URL:       cacheKey,
-		Body:      body,
-		StoredAt:  time.Now(),
-		TTL:       c.cacheTTL,
-		StaleTime: 0,
-	}
-
-	return c.cache.Set(ctx, entry)
+	return cached, nil
 }
 
 // fetchAndParse fetches and parses robots.txt from the given URL.

@@ -15,20 +15,19 @@ import (
 	"github.com/joeychilson/websurfer/client"
 	"github.com/joeychilson/websurfer/config"
 	api "github.com/joeychilson/websurfer/server"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
 	defaultAddr       = ":8080"
 	defaultConfigFile = "./config.yaml"
-	defaultCacheType  = "memory"
-	defaultRedisURL   = "redis://localhost:6379/0"
+	defaultRedisURL   = ""
 	defaultLogLevel   = "info"
 )
 
 type appConfig struct {
 	addr       string
 	configFile string
-	cacheType  string
 	redisURL   string
 	logLevel   string
 }
@@ -39,7 +38,6 @@ func main() {
 	log := setupLogger(cfg.logLevel)
 	log.Info("starting websurfer API server",
 		"addr", cfg.addr,
-		"cache_type", cfg.cacheType,
 		"log_level", cfg.logLevel)
 
 	var c *client.Client
@@ -64,41 +62,31 @@ func main() {
 
 	c = c.WithLogger(log)
 
-	if cfg.cacheType != "none" {
-		var cacheImpl cache.Cache
-		switch cfg.cacheType {
-		case "memory":
-			log.Info("using in-memory cache")
-			cacheImpl = cache.NewMemoryCache(cache.DefaultConfig())
-		case "redis":
-			log.Info("using Redis cache", "url", cfg.redisURL)
-			var err error
-			cacheImpl, err = cache.NewRedisCache(cache.RedisConfig{
-				URL: cfg.redisURL,
-			})
-			if err != nil {
-				log.Error("failed to create Redis cache", "error", err)
-				os.Exit(1)
-			}
-		default:
-			log.Error("unknown cache type", "type", cfg.cacheType)
+	// Create shared Redis client if configured
+	var redisClient *redis.Client
+	if cfg.redisURL != "" {
+		opts, err := redis.ParseURL(cfg.redisURL)
+		if err != nil {
+			log.Error("failed to parse redis URL", "error", err)
 			os.Exit(1)
 		}
+		redisClient = redis.NewClient(opts)
+		defer redisClient.Close()
+		log.Info("redis client created", "url", cfg.redisURL)
+
+		// Use Redis cache
+		cacheImpl := cache.NewRedisCache(redisClient, cache.RedisConfig{})
 		c = c.WithCache(cacheImpl)
+		log.Info("redis cache enabled")
 	} else {
-		log.Info("cache disabled")
+		log.Info("cache disabled (no redis URL configured)")
 	}
 
 	serverConfig := &api.ServerConfig{
-		RedisURL: cfg.redisURL,
+		RedisClient: redisClient,
 	}
 
-	srv, err := api.New(c, log, serverConfig)
-	if err != nil {
-		log.Error("failed to create server", "error", err)
-		os.Exit(1)
-	}
-	defer srv.Close()
+	srv := api.New(c, log, serverConfig)
 
 	router := srv.Router()
 
@@ -153,10 +141,8 @@ func parseFlags() *appConfig {
 		"HTTP server address")
 	flag.StringVar(&cfg.configFile, "config", getEnv("CONFIG_FILE", defaultConfigFile),
 		"Path to config file (optional)")
-	flag.StringVar(&cfg.cacheType, "cache", getEnv("CACHE_TYPE", defaultCacheType),
-		"Cache type: none, memory, or redis")
 	flag.StringVar(&cfg.redisURL, "redis-url", getEnv("REDIS_URL", defaultRedisURL),
-		"Redis URL (for redis cache)")
+		"Redis URL (enables cache and distributed rate limiting)")
 	flag.StringVar(&cfg.logLevel, "log-level", getEnv("LOG_LEVEL", defaultLogLevel),
 		"Log level: debug, info, warn, error")
 
@@ -168,13 +154,12 @@ func parseFlags() *appConfig {
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
 		fmt.Fprintf(os.Stderr, "  ADDR          HTTP server address (default: %s)\n", defaultAddr)
 		fmt.Fprintf(os.Stderr, "  CONFIG_FILE   Path to config file (default: %s)\n", defaultConfigFile)
-		fmt.Fprintf(os.Stderr, "  CACHE_TYPE    Cache type: none, memory, redis (default: %s)\n", defaultCacheType)
-		fmt.Fprintf(os.Stderr, "  REDIS_URL     Redis URL (default: %s)\n", defaultRedisURL)
+		fmt.Fprintf(os.Stderr, "  REDIS_URL     Redis URL for cache and rate limiting (optional)\n")
 		fmt.Fprintf(os.Stderr, "  LOG_LEVEL     Log level: debug, info, warn, error (default: %s)\n", defaultLogLevel)
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  %s\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -addr :3000 -cache redis -redis-url redis://localhost:6379/0\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -config config.json -log-level debug\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -addr :3000 -redis-url redis://localhost:6379/0\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -config config.yaml -log-level debug\n", os.Args[0])
 	}
 
 	flag.Parse()

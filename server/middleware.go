@@ -13,7 +13,7 @@ import (
 type RateLimitConfig struct {
 	RequestLimit   int
 	WindowDuration time.Duration
-	RedisURL       string
+	RedisClient    *redis.Client // Optional Redis client for distributed rate limiting
 }
 
 // DefaultRateLimitConfig returns a default rate limit configuration.
@@ -24,31 +24,17 @@ func DefaultRateLimitConfig() RateLimitConfig {
 	}
 }
 
-// RateLimiter wraps the rate limiting middleware with a cleanup function.
-type RateLimiter struct {
-	Handler     func(next http.Handler) http.Handler
-	redisClient *redis.Client
-}
-
 // RateLimit returns a rate limiter middleware that rate limits requests per IP address.
-func RateLimit(config RateLimitConfig) (*RateLimiter, error) {
+func RateLimit(config RateLimitConfig) func(next http.Handler) http.Handler {
 	if config.RequestLimit == 0 {
 		config = DefaultRateLimitConfig()
 	}
 
 	var rateLimiter *httprate.RateLimiter
-	var redisClient *redis.Client
 
-	if config.RedisURL != "" {
-		opts, err := redis.ParseURL(config.RedisURL)
-		if err != nil {
-			return nil, err
-		}
-
-		redisClient = redis.NewClient(opts)
-
+	if config.RedisClient != nil {
 		redisConfig := &httprateredis.Config{
-			Client:    redisClient,
+			Client:    config.RedisClient,
 			PrefixKey: "websurfer:ratelimit",
 		}
 
@@ -76,16 +62,5 @@ func RateLimit(config RateLimitConfig) (*RateLimiter, error) {
 		)
 	}
 
-	return &RateLimiter{
-		Handler:     rateLimiter.Handler,
-		redisClient: redisClient,
-	}, nil
-}
-
-// Close releases resources held by the rate limiter (e.g., Redis connection).
-func (rl *RateLimiter) Close() error {
-	if rl.redisClient != nil {
-		return rl.redisClient.Close()
-	}
-	return nil
+	return rateLimiter.Handler
 }
