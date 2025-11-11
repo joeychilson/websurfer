@@ -2,11 +2,14 @@ package html
 
 import (
 	"context"
-	"net/url"
 	"regexp"
 	"strings"
 	"unicode"
 
+	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
 	"github.com/joeychilson/websurfer/parser"
 	"github.com/joeychilson/websurfer/parser/rules"
 	"github.com/microcosm-cc/bluemonday"
@@ -14,11 +17,8 @@ import (
 )
 
 var (
-	whitespaceRegex    = regexp.MustCompile(`\s+`)
-	tagWhitespaceRegex = regexp.MustCompile(`>\s+<`)
-
-	// Void elements that should not be removed even if empty
-	voidElements = map[string]bool{
+	whitespaceRegex = regexp.MustCompile(`\s+`)
+	voidElements    = map[string]bool{
 		"img": true, "br": true, "hr": true, "input": true,
 		"meta": true, "link": true, "area": true, "base": true,
 		"col": true, "embed": true, "param": true, "source": true,
@@ -60,11 +60,7 @@ func New(opts ...Option) *Parser {
 	return p
 }
 
-// Parse transforms HTML into LLM-friendly minified HTML.
-// Removes scripts, styles, empty elements, divs, and compresses whitespace
-// while preserving all semantic content and structure.
-// If rules are configured and a URL is in the context, applies matching rules.
-// If a URL is in the context, converts relative links to absolute URLs.
+// Parse transforms HTML into LLM-friendly Markdown.
 func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 	if len(content) == 0 {
 		return content, nil
@@ -87,18 +83,29 @@ func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 
 	optimizeHTML(doc)
 
-	if urlStr != "" {
-		convertLinksToAbsolute(doc, urlStr)
-	}
-
 	var buf strings.Builder
 	if err := html.Render(&buf, doc); err != nil {
 		return nil, err
 	}
 
-	compacted := removeWhitespace(buf.String())
+	opts := []converter.ConvertOptionFunc{}
+	if urlStr != "" {
+		opts = append(opts, converter.WithDomain(urlStr))
+	}
 
-	return []byte(compacted), nil
+	conv := converter.NewConverter(
+		converter.WithPlugins(
+			base.NewBasePlugin(),
+			commonmark.NewCommonmarkPlugin(),
+			table.NewTablePlugin(),
+		),
+	)
+	markdown, err := conv.ConvertString(buf.String(), opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return []byte(markdown), nil
 }
 
 // createSanitizationPolicy creates a policy that keeps structural/semantic elements only.
@@ -107,13 +114,12 @@ func createSanitizationPolicy() *bluemonday.Policy {
 	policy := bluemonday.NewPolicy()
 
 	policy.AllowElements("div", "p", "h1", "h2", "h3", "h4", "h5", "h6",
-		"header", "footer", "nav", "main",
+		"main",
 		"ul", "ol", "li",
 		"table", "thead", "tbody", "tr", "td", "th",
-		"a", "img", "br", "hr", "input")
+		"a", "br", "hr")
 
 	policy.AllowAttrs("href").OnElements("a")
-	policy.AllowAttrs("src", "alt").OnElements("img")
 	policy.AllowAttrs("colspan", "rowspan").OnElements("td", "th")
 
 	return policy
@@ -194,94 +200,4 @@ func isEmptyNode(n *html.Node) bool {
 	}
 
 	return true
-}
-
-// removeWhitespace compacts HTML by removing whitespace between tags and newlines,
-// but preserves semantic line breaks after block-level elements for LLM-friendly navigation.
-func removeWhitespace(htmlStr string) string {
-	htmlStr = tagWhitespaceRegex.ReplaceAllString(htmlStr, "><")
-
-	var result strings.Builder
-	result.Grow(len(htmlStr))
-
-	for _, line := range strings.Split(htmlStr, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			result.WriteString(trimmed)
-		}
-	}
-
-	minified := result.String()
-
-	blockElements := []string{
-		"</p>", "</h1>", "</h2>", "</h3>", "</h4>", "</h5>", "</h6>",
-		"</table>", "</thead>", "</tbody>", "</tfoot>", "</tr>",
-		"</ul>", "</ol>", "</li>",
-		"</header>", "</footer>", "</nav>", "</main>", "</section>", "</article>", "</aside>",
-		"</blockquote>", "</pre>", "</hr>",
-	}
-
-	for _, tag := range blockElements {
-		minified = strings.ReplaceAll(minified, tag, tag+"\n")
-	}
-
-	return minified
-}
-
-// convertLinksToAbsolute traverses the HTML tree and converts all relative hrefs and image srcs to absolute URLs.
-// Skips javascript:, mailto:, tel:, and # (fragment-only) links for <a> tags.
-// Converts all relative image src attributes to absolute URLs for <img> tags.
-func convertLinksToAbsolute(n *html.Node, baseURL string) {
-	base, err := url.Parse(baseURL)
-	if err != nil {
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			convertLinksToAbsolute(c, baseURL)
-		}
-		return
-	}
-
-	if n.Type == html.ElementNode {
-		if n.Data == "a" {
-			for i, attr := range n.Attr {
-				if attr.Key == "href" && attr.Val != "" {
-					href := strings.TrimSpace(attr.Val)
-
-					if strings.HasPrefix(href, "#") ||
-						strings.HasPrefix(href, "javascript:") ||
-						strings.HasPrefix(href, "mailto:") ||
-						strings.HasPrefix(href, "tel:") {
-						continue
-					}
-
-					parsed, err := url.Parse(href)
-					if err != nil {
-						continue
-					}
-
-					absolute := base.ResolveReference(parsed)
-					n.Attr[i].Val = absolute.String()
-				}
-			}
-		}
-
-		if n.Data == "img" {
-			for i, attr := range n.Attr {
-				if attr.Key == "src" && attr.Val != "" {
-					src := strings.TrimSpace(attr.Val)
-
-					parsed, err := url.Parse(src)
-					if err != nil {
-						continue
-					}
-
-					absolute := base.ResolveReference(parsed)
-					n.Attr[i].Val = absolute.String()
-				}
-			}
-		}
-	}
-
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		convertLinksToAbsolute(c, baseURL)
-	}
 }

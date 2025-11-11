@@ -13,7 +13,7 @@ import (
 	"github.com/joeychilson/websurfer/client"
 	"github.com/joeychilson/websurfer/content"
 	"github.com/joeychilson/websurfer/logger"
-	"github.com/joeychilson/websurfer/search"
+	"github.com/joeychilson/websurfer/outline"
 	urlpkg "github.com/joeychilson/websurfer/url"
 )
 
@@ -22,7 +22,6 @@ type FetchRequest struct {
 	URL       string                `json:"url"`
 	MaxTokens int                   `json:"max_tokens,omitempty"`
 	Range     *content.RangeOptions `json:"range,omitempty"`
-	Search    *search.Options       `json:"search,omitempty"`
 }
 
 // Metadata contains metadata about the fetched content.
@@ -41,10 +40,10 @@ type Metadata struct {
 
 // FetchResponse represents the response from a fetch request.
 type FetchResponse struct {
-	Metadata      Metadata           `json:"metadata"`
-	Content       string             `json:"content,omitempty"`
-	SearchResults *search.Result     `json:"search_results,omitempty"`
-	Navigation    *search.Navigation `json:"navigation,omitempty"`
+	Metadata   Metadata            `json:"metadata"`
+	Content    string              `json:"content,omitempty"`
+	Outline    *outline.Outline    `json:"outline,omitempty"`
+	Navigation *content.Navigation `json:"navigation,omitempty"`
 }
 
 // ErrorResponse represents an error.
@@ -138,24 +137,6 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 		workingText = extracted
 	}
 
-	if req.Search != nil {
-		searchResults, err := search.Search(workingText, contentType, *req.Search)
-		if err != nil {
-			return nil, fmt.Errorf("search failed: %w", err)
-		}
-
-		totalTokens := 0
-		for _, match := range searchResults.Results {
-			totalTokens += match.EstimatedTokens
-		}
-
-		metadata := buildFetchMetadata(fetched, contentType, language, lastModified, totalTokens)
-		return &FetchResponse{
-			Metadata:      metadata,
-			SearchResults: searchResults,
-		}, nil
-	}
-
 	if req.MaxTokens > 0 {
 		truncation := content.Truncate(workingText, contentType, req.MaxTokens)
 
@@ -183,7 +164,10 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 
 	metadata := buildFetchMetadata(fetched, contentType, language, lastModified, estimatedTokens)
 
-	// Build navigation for full content
+	// Extract outline from the markdown/text content (not original HTML)
+	// HTML parser now returns markdown, so outline should be based on that
+	documentOutline := outline.Extract(workingText, "text/markdown")
+
 	start := 0
 	end := len(workingText)
 	if req.Range != nil {
@@ -194,7 +178,8 @@ func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchRe
 	return &FetchResponse{
 		Metadata:   metadata,
 		Content:    workingText,
-		Navigation: buildNavigationForContent(start, end, len(bodyText), 0),
+		Outline:    documentOutline,
+		Navigation: buildNavigationForContent(start, end, len(workingText), 0),
 	}, nil
 }
 
@@ -218,14 +203,14 @@ func buildFetchMetadata(resp *client.Response, contentType, language, lastModifi
 	return metadata
 }
 
-func buildNavigationForContent(start, end, totalLength, maxTokens int) *search.Navigation {
-	nav := &search.Navigation{
+func buildNavigationForContent(start, end, totalLength, maxTokens int) *content.Navigation {
+	nav := &content.Navigation{
 		Current: &content.RangeOptions{
 			Type:  "chars",
 			Start: start,
 			End:   end,
 		},
-		Options: []search.NavigationOption{},
+		Options: []content.NavigationOption{},
 	}
 
 	chunkSize := end - start
@@ -237,7 +222,7 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *search.N
 
 	if start > 0 {
 		prevStart := max(0, start-chunkSize)
-		nav.Options = append(nav.Options, search.NavigationOption{
+		nav.Options = append(nav.Options, content.NavigationOption{
 			ID: "previous",
 			Range: &content.RangeOptions{
 				Type:  "chars",
@@ -250,7 +235,7 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *search.N
 
 	if end < totalLength {
 		nextEnd := min(totalLength, end+chunkSize)
-		nav.Options = append(nav.Options, search.NavigationOption{
+		nav.Options = append(nav.Options, content.NavigationOption{
 			ID: "next",
 			Range: &content.RangeOptions{
 				Type:  "chars",
@@ -263,7 +248,7 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *search.N
 
 	if end < totalLength {
 		expandEnd := min(totalLength, end+chunkSize)
-		nav.Options = append(nav.Options, search.NavigationOption{
+		nav.Options = append(nav.Options, content.NavigationOption{
 			ID: "expand_forward",
 			Range: &content.RangeOptions{
 				Type:  "chars",
@@ -275,7 +260,7 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *search.N
 	}
 
 	if start > 0 || end < totalLength {
-		nav.Options = append(nav.Options, search.NavigationOption{
+		nav.Options = append(nav.Options, content.NavigationOption{
 			ID: "full",
 			Range: &content.RangeOptions{
 				Type:  "chars",
@@ -318,21 +303,6 @@ func (h *Handler) validateRequest(req *FetchRequest) error {
 		}
 		if req.Range.Start >= req.Range.End {
 			return fmt.Errorf("range start must be less than end")
-		}
-	}
-
-	if req.Search != nil {
-		if req.Search.Query == "" {
-			return fmt.Errorf("search query cannot be empty")
-		}
-		if req.Search.WindowSize < 0 {
-			return fmt.Errorf("window_size must be non-negative")
-		}
-		if req.Search.MaxResults < 0 {
-			return fmt.Errorf("max_results must be non-negative")
-		}
-		if req.Search.MinScore < 0 {
-			return fmt.Errorf("min_score must be non-negative")
 		}
 	}
 

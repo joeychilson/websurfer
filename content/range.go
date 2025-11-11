@@ -7,12 +7,22 @@ import (
 
 // RangeOptions defines a range selection.
 type RangeOptions struct {
-	// Type is either "lines" or "chars"
-	Type string `json:"type"`
-	// Start is the starting position (0-indexed)
-	Start int `json:"start"`
-	// End is the ending position (exclusive)
-	End int `json:"end"`
+	Type  string `json:"type"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+}
+
+// Navigation provides options for expanding or moving around content
+type Navigation struct {
+	Current *RangeOptions      `json:"current"`
+	Options []NavigationOption `json:"options"`
+}
+
+// NavigationOption represents a single navigation action
+type NavigationOption struct {
+	ID          string        `json:"id"`
+	Range       *RangeOptions `json:"range"`
+	Description string        `json:"description"`
 }
 
 // ExtractRange extracts a specific range from content.
