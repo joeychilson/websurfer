@@ -3,9 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
-	"html"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +19,7 @@ import (
 	"github.com/joeychilson/websurfer/ratelimit"
 	"github.com/joeychilson/websurfer/retry"
 	"github.com/joeychilson/websurfer/robots"
+	"golang.org/x/net/html"
 )
 
 // Client orchestrates all components to fetch web content respectfully.
@@ -47,11 +46,6 @@ type Response struct {
 	CacheState  string
 	CachedAt    time.Time
 }
-
-var (
-	titleRegex           = regexp.MustCompile(`(?i)<title[^>]*>(.*?)</title>`)
-	descriptionMetaRegex = regexp.MustCompile(`(?is)<meta\s+(?:name=["']description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+name=["']description["']|property=["']og:description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:description["'])`)
-)
 
 // New creates a new Client with the given configuration.
 func New(cfg *config.Config) (*Client, error) {
@@ -341,9 +335,7 @@ func (c *Client) fetchAndCacheConditional(ctx context.Context, urlStr string, ca
 	title := ""
 	description := ""
 	if strings.Contains(strings.ToLower(contentType), "html") && len(fetcherResp.Body) > 0 {
-		htmlContent := string(fetcherResp.Body)
-		title = extractTitle(htmlContent)
-		description = extractDescription(htmlContent)
+		title, description = extractMetadataFromHTML(string(fetcherResp.Body))
 	}
 
 	body := fetcherResp.Body
@@ -388,25 +380,68 @@ func (c *Client) applyCrawlDelay(resolved config.ResolvedConfig, crawlDelay time
 	return resolved
 }
 
-// extractTitle extracts the title from HTML content.
-func extractTitle(htmlContent string) string {
-	if matches := titleRegex.FindStringSubmatch(htmlContent); len(matches) > 1 {
-		title := strings.TrimSpace(matches[1])
-		return html.UnescapeString(title)
+// extractMetadataFromHTML extracts title and description from HTML by parsing the DOM.
+func extractMetadataFromHTML(htmlContent string) (title, description string) {
+	doc, err := html.Parse(strings.NewReader(htmlContent))
+	if err != nil {
+		return "", ""
 	}
-	return ""
+
+	var extract func(*html.Node)
+	extract = func(node *html.Node) {
+		if node.Type == html.ElementNode {
+			switch node.Data {
+			case "title":
+				if title == "" {
+					title = getNodeText(node)
+				}
+			case "meta":
+				if description == "" {
+					name := getAttr(node, "name")
+					property := getAttr(node, "property")
+
+					if name == "description" {
+						description = getAttr(node, "content")
+					}
+					if property == "og:description" && description == "" {
+						description = getAttr(node, "content")
+					}
+				}
+			}
+		}
+
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			extract(c)
+		}
+	}
+
+	extract(doc)
+
+	title = strings.TrimSpace(title)
+	description = strings.TrimSpace(description)
+
+	return title, description
 }
 
-// extractDescription extracts the meta description from HTML content.
-// Checks both standard meta description and Open Graph description.
-func extractDescription(htmlContent string) string {
-	matches := descriptionMetaRegex.FindStringSubmatch(htmlContent)
-	if len(matches) == 0 {
-		return ""
+// getNodeText extracts all text content from a node and its children.
+func getNodeText(n *html.Node) string {
+	if n.Type == html.TextNode {
+		return n.Data
 	}
-	for _, match := range matches[1:] {
-		if match != "" {
-			return html.UnescapeString(strings.TrimSpace(match))
+
+	var text strings.Builder
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		text.WriteString(getNodeText(c))
+	}
+
+	return text.String()
+}
+
+// getAttr returns the value of an attribute from an HTML node.
+func getAttr(n *html.Node, key string) string {
+	for _, attr := range n.Attr {
+		if attr.Key == key {
+			return attr.Val
 		}
 	}
 	return ""
