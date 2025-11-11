@@ -1,13 +1,9 @@
 package rules
 
 // Rule defines a transformation that can be applied to parsed content.
-// Rules are URL and content-type aware, applying only when conditions match.
 type Rule interface {
-	// Match returns true if this rule should be applied
 	Match(urlStr, contentType string) bool
-	// Apply applies the rule's transformations to the content
 	Apply(content []byte) []byte
-	// Name returns the rule's name for logging/debugging
 	Name() string
 }
 
@@ -29,7 +25,6 @@ func (rc *RuleChain) Add(rule Rule) {
 }
 
 // Apply applies all matching rules to the content for the given URL and content type.
-// Rules are applied in the order they were added.
 func (rc *RuleChain) Apply(urlStr, contentType string, content []byte) []byte {
 	if len(rc.rules) == 0 {
 		return content

@@ -105,7 +105,6 @@ func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 }
 
 // createSanitizationPolicy creates a policy that keeps structural/semantic elements only.
-// Strips scripts, styles, classes, ids, and other non-essential attributes.
 func createSanitizationPolicy() *bluemonday.Policy {
 	policy := bluemonday.NewPolicy()
 
@@ -122,7 +121,6 @@ func createSanitizationPolicy() *bluemonday.Policy {
 }
 
 // optimizeHTML performs all HTML optimizations in a single tree traversal.
-// Operations: normalize whitespace, remove empty attributes, remove empty nodes, unwrap divs.
 func optimizeHTML(n *html.Node) {
 	for c := n.FirstChild; c != nil; {
 		next := c.NextSibling
@@ -176,7 +174,6 @@ func optimizeHTML(n *html.Node) {
 }
 
 // isEmptyNode checks if a node is empty (no text content, only whitespace and empty children).
-// Void elements (img, br, hr, etc.) are never considered empty.
 func isEmptyNode(n *html.Node) bool {
 	if voidElements[n.Data] {
 		return false

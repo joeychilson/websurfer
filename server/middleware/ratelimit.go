@@ -11,16 +11,12 @@ import (
 
 // RateLimitConfig holds configuration for the rate limiter.
 type RateLimitConfig struct {
-	// RequestLimit is the number of requests allowed per window
-	RequestLimit int
-	// WindowDuration is the time window for rate limiting
+	RequestLimit   int
 	WindowDuration time.Duration
-	// RedisURL is the Redis connection URL (optional, uses in-memory if empty)
-	RedisURL string
+	RedisURL       string
 }
 
 // DefaultRateLimitConfig returns a default rate limit configuration.
-// Limits to 100 requests per minute per IP address.
 func DefaultRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
 		RequestLimit:   100,
@@ -35,8 +31,6 @@ type RateLimiter struct {
 }
 
 // RateLimit returns a rate limiter middleware that rate limits requests per IP address.
-// If RedisURL is provided, uses Redis-backed storage for distributed rate limiting.
-// Otherwise, uses in-memory storage (suitable for single-instance deployments).
 func RateLimit(config RateLimitConfig) (*RateLimiter, error) {
 	if config.RequestLimit == 0 {
 		config = DefaultRateLimitConfig()

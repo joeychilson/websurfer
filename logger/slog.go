@@ -38,7 +38,6 @@ func (l *slogLogger) With(args ...any) Logger {
 }
 
 // WithContext returns a new logger with context.
-// For slog, this is a no-op as context is passed to individual log calls.
 func (l *slogLogger) WithContext(ctx context.Context) Logger {
 	return l
 }

@@ -13,14 +13,10 @@ import (
 )
 
 const (
-	// DefaultUserAgent is the default User-Agent header used when none is specified.
-	// Format follows best practices: tool name/version, description, and contact URL.
 	DefaultUserAgent = "websurfer/1.0 (webpage retriever; +https://github.com/joeychilson/websurfer)"
 )
 
 // Config represents the top-level configuration structure for the webpage retriever.
-// It contains default settings applied to all requests and optional site-specific
-// overrides that are matched by URL patterns.
 type Config struct {
 	Default DefaultConfig `yaml:"default"`
 	Sites   []SiteConfig  `yaml:"sites"`
@@ -39,8 +35,6 @@ func New() *Config {
 }
 
 // ResolvedConfig is the final merged configuration for a specific URL.
-// It combines default settings with any matching site-specific overrides,
-// ready to be used for fetching the webpage.
 type ResolvedConfig struct {
 	Cache     CacheConfig
 	Fetch     FetchConfig
@@ -76,8 +70,6 @@ func (c *Config) GetConfigForURL(url string) ResolvedConfig {
 }
 
 // DefaultConfig contains default settings applied to all sites unless overridden.
-// These settings serve as the baseline configuration for cache behavior, fetching,
-// rate limiting, and retry logic.
 type DefaultConfig struct {
 	Cache     CacheConfig     `yaml:"cache"`
 	Fetch     FetchConfig     `yaml:"fetch"`
@@ -86,11 +78,8 @@ type DefaultConfig struct {
 }
 
 // CacheConfig defines caching behavior for fetched webpages.
-// Supports both standard caching (TTL) and stale-while-revalidate patterns.
 type CacheConfig struct {
-	// TTL is how long cached content remains valid. Zero disables caching.
-	TTL time.Duration `yaml:"ttl,omitempty"`
-	// StaleTime allows serving stale content while revalidating in the background.
+	TTL       time.Duration `yaml:"ttl,omitempty"`
 	StaleTime time.Duration `yaml:"stale_time,omitempty"`
 }
 
@@ -107,30 +96,17 @@ func (c *CacheConfig) IsStaleWhileRevalidateEnabled() bool {
 // FetchConfig defines how to fetch webpages, including HTTP client settings,
 // browser automation, robots.txt compliance, and content format preferences.
 type FetchConfig struct {
-	// UseHeadless enables headless Chrome for JavaScript-heavy sites.
-	UseHeadless bool `yaml:"use_headless,omitempty"`
-	// Timeout is the total request timeout including redirects.
-	Timeout time.Duration `yaml:"timeout,omitempty"`
-	// UserAgent is the User-Agent header. Defaults to DefaultUserAgent if empty.
-	UserAgent string `yaml:"user_agent,omitempty"`
-	// Headers are additional HTTP headers to include in requests.
-	Headers map[string]string `yaml:"headers,omitempty"`
-	// CheckFormats lists alternative content paths to try (e.g., ["/llms.txt", ".md"]).
-	CheckFormats []string `yaml:"check_formats,omitempty"`
-	// URLRewrites are transformations applied to URLs before fetching.
-	URLRewrites []URLRewrite `yaml:"url_rewrites,omitempty"`
-	// RespectRobotsTxt enables robots.txt checking before fetching.
-	RespectRobotsTxt bool `yaml:"respect_robots_txt,omitempty"`
-	// RobotsTxtCacheTTL is how long to cache robots.txt (default: 24h).
-	RobotsTxtCacheTTL time.Duration `yaml:"robots_txt_cache_ttl,omitempty"`
-	// FollowRedirects enables following HTTP redirects (default: true).
-	FollowRedirects bool `yaml:"follow_redirects,omitempty"`
-	// MaxRedirects is the maximum number of redirects to follow (default: 10, 0 disables).
-	MaxRedirects int `yaml:"max_redirects,omitempty"`
-	// EnableSSRFProtection enables SSRF protection checks (default: false).
-	// When true, requests to private/loopback IPs are blocked.
-	// Set to true in production for security.
-	EnableSSRFProtection bool `yaml:"enable_ssrf_protection,omitempty"`
+	UseHeadless          bool              `yaml:"use_headless,omitempty"`
+	Timeout              time.Duration     `yaml:"timeout,omitempty"`
+	UserAgent            string            `yaml:"user_agent,omitempty"`
+	Headers              map[string]string `yaml:"headers,omitempty"`
+	CheckFormats         []string          `yaml:"check_formats,omitempty"`
+	URLRewrites          []URLRewrite      `yaml:"url_rewrites,omitempty"`
+	RespectRobotsTxt     bool              `yaml:"respect_robots_txt,omitempty"`
+	RobotsTxtCacheTTL    time.Duration     `yaml:"robots_txt_cache_ttl,omitempty"`
+	FollowRedirects      bool              `yaml:"follow_redirects,omitempty"`
+	MaxRedirects         int               `yaml:"max_redirects,omitempty"`
+	EnableSSRFProtection bool              `yaml:"enable_ssrf_protection,omitempty"`
 }
 
 // GetHeaders returns the headers to use for a request
@@ -173,45 +149,28 @@ func (f *FetchConfig) GetMaxRedirects() int {
 }
 
 // URLRewrite defines a URL transformation rule applied before fetching.
-// Useful for converting web URLs to direct content URLs (e.g., HTML page to Markdown).
 type URLRewrite struct {
-	// Type specifies the rewrite type: "regex" or "literal" (default: literal).
-	Type string `yaml:"type"`
-	// Pattern is the string or regex pattern to match in the URL.
-	Pattern string `yaml:"pattern,omitempty"`
-	// Replacement is what to replace the matched pattern with.
+	Type        string `yaml:"type"`
+	Pattern     string `yaml:"pattern,omitempty"`
 	Replacement string `yaml:"replacement,omitempty"`
 }
 
 // SiteConfig represents configuration overrides for URLs matching a specific pattern.
-// Pattern supports wildcards: "*.example.com", "example.com/api/*", "*example*".
-// Site-specific settings override defaults for matching URLs.
 type SiteConfig struct {
-	// Pattern is the URL pattern to match (supports wildcards).
-	Pattern string `yaml:"pattern"`
-	// Cache overrides default cache settings for this pattern.
-	Cache *CacheConfig `yaml:"cache,omitempty"`
-	// Fetch overrides default fetch settings for this pattern.
-	Fetch *FetchConfig `yaml:"fetch,omitempty"`
-	// RateLimit overrides default rate limiting for this pattern.
+	Pattern   string           `yaml:"pattern"`
+	Cache     *CacheConfig     `yaml:"cache,omitempty"`
+	Fetch     *FetchConfig     `yaml:"fetch,omitempty"`
 	RateLimit *RateLimitConfig `yaml:"rate_limit,omitempty"`
-	// Retry overrides default retry settings for this pattern.
-	Retry *RetryConfig `yaml:"retry,omitempty"`
+	Retry     *RetryConfig     `yaml:"retry,omitempty"`
 }
 
 // RateLimitConfig defines rate limiting behavior to avoid overwhelming servers.
-// Supports request-per-second limits, concurrency limits, and Retry-After headers.
 type RateLimitConfig struct {
-	// RequestsPerSecond limits the rate of requests (e.g., 2.0 = 2 requests per second).
-	RequestsPerSecond float64 `yaml:"requests_per_second,omitempty"`
-	// Burst allows temporary bursts above the rate limit (token bucket algorithm).
-	Burst int `yaml:"burst,omitempty"`
-	// Delay specifies minimum time between requests (takes precedence over RequestsPerSecond).
-	Delay time.Duration `yaml:"delay,omitempty"`
-	// MaxConcurrent limits concurrent requests to the same domain (0 = unlimited).
-	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
-	// RespectRetryAfter honors Retry-After headers from 429/503 responses.
-	RespectRetryAfter bool `yaml:"respect_retry_after,omitempty"`
+	RequestsPerSecond float64       `yaml:"requests_per_second,omitempty"`
+	Burst             int           `yaml:"burst,omitempty"`
+	Delay             time.Duration `yaml:"delay,omitempty"`
+	MaxConcurrent     int           `yaml:"max_concurrent,omitempty"`
+	RespectRetryAfter bool          `yaml:"respect_retry_after,omitempty"`
 }
 
 // GetDelay returns the minimum delay between requests based on rate limits
@@ -239,18 +198,12 @@ func (r *RateLimitConfig) GetMaxConcurrent() int {
 }
 
 // RetryConfig defines retry and exponential backoff behavior for failed requests.
-// Helps handle transient failures gracefully with configurable status codes and delays.
 type RetryConfig struct {
-	// MaxRetries is the maximum number of retry attempts (0 = no retries).
-	MaxRetries int `yaml:"max_retries,omitempty"`
-	// InitialDelay is the delay before the first retry (default: 1s).
+	MaxRetries   int           `yaml:"max_retries,omitempty"`
 	InitialDelay time.Duration `yaml:"initial_delay,omitempty"`
-	// MaxDelay is the maximum delay between retries (default: 30s).
-	MaxDelay time.Duration `yaml:"max_delay,omitempty"`
-	// Multiplier for exponential backoff (e.g., 2.0 doubles delay each time, default: 2.0).
-	Multiplier float64 `yaml:"multiplier,omitempty"`
-	// RetryOn specifies HTTP status codes to retry (default: [429, 500, 502, 503, 504]).
-	RetryOn []int `yaml:"retry_on,omitempty"`
+	MaxDelay     time.Duration `yaml:"max_delay,omitempty"`
+	Multiplier   float64       `yaml:"multiplier,omitempty"`
+	RetryOn      []int         `yaml:"retry_on,omitempty"`
 }
 
 // IsEnabled returns true if retries are configured

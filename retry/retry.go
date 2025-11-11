@@ -34,13 +34,11 @@ func New(f *fetcher.Fetcher, l *ratelimit.Limiter, cfg config.RetryConfig) *Retr
 }
 
 // Fetch attempts to fetch the URL with automatic retries on failure.
-// It applies rate limiting, exponential backoff with jitter, and respects Retry-After headers.
 func (r *Retrier) Fetch(ctx context.Context, url string) (*fetcher.Response, error) {
 	return r.FetchWithOptions(ctx, url, nil)
 }
 
 // FetchWithOptions attempts to fetch the URL with optional fetch options and automatic retries on failure.
-// It applies rate limiting, exponential backoff with jitter, and respects Retry-After headers.
 func (r *Retrier) FetchWithOptions(ctx context.Context, url string, opts *fetcher.FetchOptions) (*fetcher.Response, error) {
 	maxRetries := r.config.GetMaxRetries()
 
@@ -108,7 +106,6 @@ func (r *Retrier) calculateBackoff(attempt int) time.Duration {
 }
 
 // addJitter adds random jitter to prevent thundering herd.
-// Jitter is +/- 25% of the duration.
 func (r *Retrier) addJitter(duration time.Duration) time.Duration {
 	if duration == 0 {
 		return 0

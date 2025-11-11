@@ -52,7 +52,6 @@ func NewMemoryCache(config Config) *MemoryCache {
 }
 
 // Get retrieves an entry from the cache.
-// Returns nil if the entry doesn't exist or is too old.
 func (mc *MemoryCache) Get(ctx context.Context, url string) (*Entry, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()

@@ -53,6 +53,7 @@ func ExtractBytes(content []byte, contentType string) *Outline {
 	return &Outline{}
 }
 
+// isMarkdown checks if the content type is markdown
 func isMarkdown(contentType string) bool {
 	return strings.Contains(contentType, "markdown") ||
 		strings.Contains(contentType, "text/markdown") ||

@@ -53,7 +53,6 @@ func NewRedisCache(config RedisConfig) *RedisCache {
 }
 
 // NewRedisCacheFromURL creates a new Redis cache from a Redis URL.
-// URL format: redis://[user[:password]@]host[:port][/db][?option=value]
 func NewRedisCacheFromURL(redisURL string, prefix string, config Config) (*RedisCache, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
@@ -99,7 +98,6 @@ func NewRedisCacheWithClient(client *redis.Client, prefix string, config Config)
 }
 
 // Get retrieves an entry from Redis.
-// Returns nil if the entry doesn't exist or is too old.
 func (rc *RedisCache) Get(ctx context.Context, url string) (*Entry, error) {
 	key := rc.makeKey(url)
 

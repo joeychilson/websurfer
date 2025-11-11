@@ -1,9 +1,7 @@
 package server
 
 import (
-	"context"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,24 +13,20 @@ import (
 
 // ServerConfig holds configuration for the API server.
 type ServerConfig struct {
-	// RedisURL for rate limiting (optional, uses in-memory if empty)
-	RedisURL string
-	// RateLimitRequests is the number of requests allowed per window (default: 100)
+	RedisURL          string
 	RateLimitRequests int
-	// RateLimitWindow is the time window for rate limiting (default: 1 minute)
-	RateLimitWindow time.Duration
+	RateLimitWindow   time.Duration
 }
 
-// Server is the HTTP server for the API.
+// Server represents the API server.
 type Server struct {
-	handler     *Handler
+	client      *client.Client
 	logger      logger.Logger
-	router      *chi.Mux
 	rateLimiter *middleware.RateLimiter
 }
 
-// NewServer creates a new API server with chi router and middleware stack.
-func NewServer(c *client.Client, log logger.Logger, cfg *ServerConfig) (*Server, error) {
+// New creates a new API server instance.
+func New(c *client.Client, log logger.Logger, cfg *ServerConfig) (*Server, error) {
 	if log == nil {
 		log = logger.Noop()
 	}
@@ -48,15 +42,6 @@ func NewServer(c *client.Client, log logger.Logger, cfg *ServerConfig) (*Server,
 		cfg.RateLimitWindow = time.Minute
 	}
 
-	handler := NewHandler(c, log)
-
-	r := chi.NewRouter()
-
-	r.Use(chimiddleware.RequestID)
-	r.Use(chimiddleware.RealIP)
-	r.Use(middleware.Logger(log))
-	r.Use(chimiddleware.Recoverer)
-
 	rateLimitConfig := middleware.RateLimitConfig{
 		RequestLimit:   cfg.RateLimitRequests,
 		WindowDuration: cfg.RateLimitWindow,
@@ -66,59 +51,28 @@ func NewServer(c *client.Client, log logger.Logger, cfg *ServerConfig) (*Server,
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
 	}
-	r.Use(rateLimiter.Handler)
 
-	r.Post("/v1/fetch", handler.HandleFetch)
-	r.Get("/health", handler.HandleHealth)
-
-	s := &Server{
-		handler:     handler,
+	return &Server{
+		client:      c,
 		logger:      log,
-		router:      r,
 		rateLimiter: rateLimiter,
-	}
-
-	return s, nil
+	}, nil
 }
 
-// Start starts the HTTP server.
-func (s *Server) Start(addr string) error {
-	s.logger.Info("starting API server", "addr", addr)
-	return http.ListenAndServe(addr, s.router)
-}
+// Router returns a configured chi.Mux with all routes and middleware.
+func (s *Server) Router() chi.Router {
+	r := chi.NewRouter()
 
-// StartWithShutdown starts the HTTP server with graceful shutdown support.
-func (s *Server) StartWithShutdown(ctx context.Context, addr string) error {
-	server := &http.Server{
-		Addr:         addr,
-		Handler:      s.router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 120 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
+	r.Use(chimiddleware.RequestID)
+	r.Use(chimiddleware.RealIP)
+	r.Use(middleware.Logger(s.logger))
+	r.Use(chimiddleware.Recoverer)
+	r.Use(s.rateLimiter.Handler)
 
-	errCh := make(chan error, 1)
-	go func() {
-		s.logger.Info("starting API server", "addr", addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
-		}
-	}()
+	r.Post("/v1/fetch", s.handleFetch)
+	r.Get("/health", s.handleHealth)
 
-	select {
-	case <-ctx.Done():
-		s.logger.Info("shutting down API server")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return server.Shutdown(shutdownCtx)
-	case err := <-errCh:
-		return fmt.Errorf("server error: %w", err)
-	}
-}
-
-// ServeHTTP implements http.Handler.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.router.ServeHTTP(w, r)
+	return r
 }
 
 // Close releases resources held by the server (e.g., Redis connections).

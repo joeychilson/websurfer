@@ -8,14 +8,6 @@ import (
 )
 
 // Normalize normalizes a URL for deduplication purposes.
-// It handles:
-// - www vs non-www (removes www)
-// - http vs https (prefers https)
-// - trailing slashes (removes them except for root)
-// - index files (index.html, index.php, etc.)
-// - URL fragments (removes them)
-// - default ports (removes 80 for http, 443 for https)
-// - empty paths become "/"
 func Normalize(rawURL string) (string, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
@@ -79,8 +71,6 @@ func Normalize(rawURL string) (string, error) {
 }
 
 // Deduplicate removes duplicate URLs after normalization.
-// It preserves the original URL format but uses normalized versions for comparison.
-// Returns a deduplicated slice maintaining the order of first occurrence.
 func Deduplicate(urls []string) []string {
 	seen := make(map[string]bool)
 	result := make([]string, 0, len(urls))
@@ -113,7 +103,6 @@ func IsSame(url1, url2 string) bool {
 }
 
 // ParseAndValidate parses a URL string and validates it has a scheme and host.
-// Returns the parsed URL or an error.
 func ParseAndValidate(rawURL string) (*url.URL, error) {
 	if strings.TrimSpace(rawURL) == "" {
 		return nil, fmt.Errorf("url cannot be empty")
@@ -136,7 +125,6 @@ func ParseAndValidate(rawURL string) (*url.URL, error) {
 }
 
 // ValidateExternal validates that a URL is external and not pointing to private/internal IP addresses.
-// This prevents SSRF (Server-Side Request Forgery) attacks.
 func ValidateExternal(rawURL string) error {
 	parsedURL, err := ParseAndValidate(rawURL)
 	if err != nil {
@@ -188,7 +176,6 @@ func IsSameDomain(url1, url2 string) bool {
 }
 
 // IsSameSubdomain checks if two URLs belong to the exact same subdomain.
-// Unlike IsSameDomain, this does NOT ignore www - it requires exact hostname match.
 func IsSameSubdomain(url1, url2 string) bool {
 	parsed1, err1 := url.Parse(url1)
 	parsed2, err2 := url.Parse(url2)
@@ -201,11 +188,6 @@ func IsSameSubdomain(url1, url2 string) bool {
 }
 
 // IsSameBaseDomain checks if two URLs belong to the same base/root domain.
-// This matches all subdomains: blog.example.com and docs.example.com both match example.com.
-// Examples:
-//   - blog.example.com and www.example.com -> true (same base: example.com)
-//   - api.github.com and github.com -> true (same base: github.com)
-//   - example.com and other.com -> false (different bases)
 func IsSameBaseDomain(url1, url2 string) bool {
 	parsed1, err1 := url.Parse(url1)
 	parsed2, err2 := url.Parse(url2)
@@ -221,7 +203,6 @@ func IsSameBaseDomain(url1, url2 string) bool {
 }
 
 // extractBaseDomain extracts the base/root domain from a hostname.
-// Examples: blog.example.com -> example.com, www.github.com -> github.com
 func extractBaseDomain(hostname string) string {
 	if hostname == "" {
 		return ""
@@ -248,12 +229,12 @@ func extractBaseDomain(hostname string) string {
 		sld := parts[len(parts)-2]
 
 		multiPartTLDs := map[string]bool{
-			"co":  true, // .co.uk, .co.jp
-			"com": true, // .com.au, .com.br
-			"gov": true, // .gov.uk
-			"ac":  true, // .ac.uk
-			"org": true, // .org.uk
-			"net": true, // .net.au
+			"co":  true,
+			"com": true,
+			"gov": true,
+			"ac":  true,
+			"org": true,
+			"net": true,
 		}
 
 		if multiPartTLDs[sld] {

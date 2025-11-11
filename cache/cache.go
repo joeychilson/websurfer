@@ -37,29 +37,19 @@ func (e *Entry) IsTooOld() bool {
 
 // Cache is the interface for cache implementations.
 type Cache interface {
-	// Get retrieves an entry from the cache.
-	// Returns nil if the entry doesn't exist or is too old.
 	Get(ctx context.Context, url string) (*Entry, error)
-	// Set stores an entry in the cache.
 	Set(ctx context.Context, entry *Entry) error
-	// Delete removes an entry from the cache.
 	Delete(ctx context.Context, url string) error
-	// Clear removes all entries from the cache.
 	Clear(ctx context.Context) error
-	// Close releases any resources held by the cache.
 	Close() error
 }
 
 // Config holds cache configuration.
 type Config struct {
-	// TTL is how long content is considered fresh
-	TTL time.Duration
-	// StaleTime is how long after TTL to serve stale content while revalidating
-	StaleTime time.Duration
-	// CleanupInterval is how often to remove expired entries (in-memory only)
+	TTL             time.Duration
+	StaleTime       time.Duration
 	CleanupInterval time.Duration
-	// MaxEntries is the maximum number of entries to store (0 = unlimited, in-memory only)
-	MaxEntries int
+	MaxEntries      int
 }
 
 // DefaultConfig returns a cache config with sensible defaults.

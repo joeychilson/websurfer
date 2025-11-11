@@ -121,7 +121,6 @@ func (c *Client) WithLogger(log logger.Logger) *Client {
 }
 
 // Fetch retrieves content from the given URL, respecting robots.txt and rate limits.
-// If caching is enabled, implements stale-while-revalidate behavior.
 func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	c.logger.Debug("fetch started", "url", urlStr)
 
@@ -277,8 +276,6 @@ func (c *Client) fetchAndCache(ctx context.Context, urlStr string) (*cache.Entry
 }
 
 // fetchAndCacheConditional performs the actual fetch operation with conditional request support.
-// If cachedLastModified is provided, it sends an If-Modified-Since header.
-// If the server responds with 304 Not Modified, returns nil entry (caller should reuse cached content).
 func (c *Client) fetchAndCacheConditional(ctx context.Context, urlStr string, cachedLastModified string) (*cache.Entry, error) {
 	resolved := c.config.GetConfigForURL(urlStr)
 

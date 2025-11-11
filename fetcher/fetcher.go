@@ -23,8 +23,6 @@ type Response struct {
 
 // FetchOptions contains optional parameters for fetch requests.
 type FetchOptions struct {
-	// IfModifiedSince sets the If-Modified-Since header for conditional requests.
-	// If the content hasn't changed, the server responds with 304 Not Modified.
 	IfModifiedSince string
 }
 
@@ -119,13 +117,11 @@ func New(cfg config.FetchConfig) *Fetcher {
 }
 
 // Fetch retrieves the content at the given URL.
-// It applies URL rewrites, tries alternative formats, and returns the response.
 func (f *Fetcher) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	return f.FetchWithOptions(ctx, urlStr, nil)
 }
 
 // FetchWithOptions retrieves the content at the given URL with optional fetch options.
-// It applies URL rewrites, tries alternative formats, and returns the response.
 func (f *Fetcher) FetchWithOptions(ctx context.Context, urlStr string, opts *FetchOptions) (*Response, error) {
 	urlStr = f.applyRewrites(urlStr)
 
@@ -200,8 +196,6 @@ func (f *Fetcher) fetchURL(ctx context.Context, urlStr string, opts *FetchOption
 }
 
 // buildURLsToTry creates a list of URLs to attempt based on CheckFormats.
-// If CheckFormats is configured, it tries alternative content paths first,
-// then falls back to the original URL.
 func (f *Fetcher) buildURLsToTry(urlStr string) []string {
 	if len(f.config.CheckFormats) == 0 {
 		return []string{urlStr}
@@ -226,9 +220,6 @@ func (f *Fetcher) buildURLsToTry(urlStr string) []string {
 }
 
 // applyFormat applies a format transformation to a URL.
-// Formats can be:
-// - Absolute paths like "/llms.txt" (replaces the path)
-// - Extensions like ".md" (replaces or appends the extension)
 func (f *Fetcher) applyFormat(parsedURL *url.URL, format string) string {
 	newURL := *parsedURL
 
@@ -274,7 +265,6 @@ func (f *Fetcher) applyRewrites(urlStr string) string {
 }
 
 // isSuccessfulResponse determines if a status code represents a successful fetch.
-// 2xx codes are always successful. 3xx codes are successful if redirects are disabled.
 func (f *Fetcher) isSuccessfulResponse(statusCode int) bool {
 	if statusCode >= 200 && statusCode < 300 {
 		return true

@@ -226,7 +226,6 @@ func extractDomain(urlStr string) (string, error) {
 }
 
 // parseRetryAfter parses a Retry-After header value.
-// Supports both HTTP-date and delay-seconds formats.
 func parseRetryAfter(value string) time.Time {
 	if seconds, err := strconv.Atoi(value); err == nil {
 		return time.Now().Add(time.Duration(seconds) * time.Second)

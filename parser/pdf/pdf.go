@@ -17,8 +17,6 @@ func New() *Parser {
 }
 
 // Parse converts PDF bytes to plain text using pdftotext with -layout -nopgbrk flags.
-// The -layout flag maintains the original physical layout of the text.
-// The -nopgbrk flag disables page break characters in the output.
 func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 	if len(content) == 0 {
 		return content, nil

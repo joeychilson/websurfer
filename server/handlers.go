@@ -12,7 +12,6 @@ import (
 
 	"github.com/joeychilson/websurfer/client"
 	"github.com/joeychilson/websurfer/content"
-	"github.com/joeychilson/websurfer/logger"
 	"github.com/joeychilson/websurfer/outline"
 	urlpkg "github.com/joeychilson/websurfer/url"
 )
@@ -53,68 +52,51 @@ type ErrorResponse struct {
 	Details    map[string]string `json:"details,omitempty"`
 }
 
-// Handler contains the HTTP handlers for the API.
-type Handler struct {
-	client *client.Client
-	logger logger.Logger
-}
-
-// NewHandler creates a new Handler.
-func NewHandler(c *client.Client, log logger.Logger) *Handler {
-	if log == nil {
-		log = logger.Noop()
-	}
-	return &Handler{
-		client: c,
-		logger: log,
-	}
-}
-
-// HandleFetch handles POST /fetch requests.
-func (h *Handler) HandleFetch(w http.ResponseWriter, r *http.Request) {
+// handleFetch handles POST /v1/fetch requests.
+func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req FetchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Error("failed to decode request", "error", err)
-		h.sendError(w, "Invalid JSON", http.StatusBadRequest)
+		s.logger.Error("failed to decode request", "error", err)
+		s.sendError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.validateRequest(&req); err != nil {
-		h.logger.Error("invalid request", "error", err)
-		h.sendError(w, err.Error(), http.StatusBadRequest)
+	if err := s.validateRequest(&req); err != nil {
+		s.logger.Error("invalid request", "error", err)
+		s.sendError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	h.logger.Info("fetch request", "url", req.URL, "max_tokens", req.MaxTokens)
+	s.logger.Info("fetch request", "url", req.URL, "max_tokens", req.MaxTokens)
 
-	resp, err := h.processFetch(ctx, &req)
+	resp, err := s.processFetch(ctx, &req)
 	if err != nil {
-		h.logger.Error("fetch failed", "url", req.URL, "error", err)
-		h.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.logger.Error("fetch failed", "url", req.URL, "error", err)
+		s.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	h.logger.Info("fetch completed",
+	s.logger.Info("fetch completed",
 		"url", resp.Metadata.URL,
 		"status_code", resp.Metadata.StatusCode)
 
-	h.sendJSON(w, resp, http.StatusOK)
+	s.sendJSON(w, resp, http.StatusOK)
 }
 
-// HandleHealth handles GET /health requests.
-func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
+// handleHealth handles GET /health requests.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	health := map[string]string{
 		"status": "ok",
 		"time":   time.Now().UTC().Format(time.RFC3339),
 	}
-	h.sendJSON(w, health, http.StatusOK)
+	s.sendJSON(w, health, http.StatusOK)
 }
 
 // processFetch handles the fetch request processing logic.
-func (h *Handler) processFetch(ctx context.Context, req *FetchRequest) (*FetchResponse, error) {
-	fetched, err := h.client.Fetch(ctx, req.URL)
+func (s *Server) processFetch(ctx context.Context, req *FetchRequest) (*FetchResponse, error) {
+	fetched, err := s.client.Fetch(ctx, req.URL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch failed: %w", err)
 	}
@@ -278,12 +260,12 @@ func firstHeader(headers map[string][]string, key string) string {
 	return ""
 }
 
-func (h *Handler) validateRequest(req *FetchRequest) error {
+func (s *Server) validateRequest(req *FetchRequest) error {
 	if req == nil {
 		return fmt.Errorf("request cannot be nil")
 	}
 
-	if _, err := h.parseAndValidateExternalURL(req.URL); err != nil {
+	if _, err := s.parseAndValidateExternalURL(req.URL); err != nil {
 		return err
 	}
 
@@ -306,30 +288,30 @@ func (h *Handler) validateRequest(req *FetchRequest) error {
 	return nil
 }
 
-func (h *Handler) parseAndValidateExternalURL(raw string) (*url.URL, error) {
+func (s *Server) parseAndValidateExternalURL(raw string) (*url.URL, error) {
 	if err := urlpkg.ValidateExternal(raw); err != nil {
 		return nil, err
 	}
 	return urlpkg.ParseAndValidate(raw)
 }
 
-func (h *Handler) sendJSON(w http.ResponseWriter, data interface{}, statusCode int) {
+func (s *Server) sendJSON(w http.ResponseWriter, data interface{}, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(data); err != nil {
-		h.logger.Error("failed to encode response", "error", err)
+		s.logger.Error("failed to encode response", "error", err)
 	}
 }
 
-func (h *Handler) sendError(w http.ResponseWriter, message string, statusCode int) {
+func (s *Server) sendError(w http.ResponseWriter, message string, statusCode int) {
 	errResp := ErrorResponse{
 		Error:      message,
 		StatusCode: statusCode,
 	}
-	h.sendJSON(w, errResp, statusCode)
+	s.sendJSON(w, errResp, statusCode)
 }
 
 func extractLanguage(htmlContent string) string {

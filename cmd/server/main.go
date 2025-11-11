@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/client"
@@ -90,10 +92,21 @@ func main() {
 		RedisURL: cfg.redisURL,
 	}
 
-	server, err := api.NewServer(c, log, serverConfig)
+	srv, err := api.New(c, log, serverConfig)
 	if err != nil {
 		log.Error("failed to create server", "error", err)
 		os.Exit(1)
+	}
+	defer srv.Close()
+
+	router := srv.Router()
+
+	httpServer := &http.Server{
+		Addr:         cfg.addr,
+		Handler:      router,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 120 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -108,7 +121,23 @@ func main() {
 		cancel()
 	}()
 
-	if err := server.StartWithShutdown(ctx, cfg.addr); err != nil {
+	errCh := make(chan error, 1)
+	go func() {
+		log.Info("starting API server", "addr", httpServer.Addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Info("shutting down API server")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Error("server shutdown error", "error", err)
+		}
+	case err := <-errCh:
 		log.Error("server error", "error", err)
 		os.Exit(1)
 	}

@@ -9,17 +9,11 @@ import (
 
 // Logger is the interface for structured logging.
 type Logger interface {
-	// Debug logs a debug message with optional key-value pairs
 	Debug(msg string, args ...any)
-	// Info logs an informational message with optional key-value pairs
 	Info(msg string, args ...any)
-	// Warn logs a warning message with optional key-value pairs
 	Warn(msg string, args ...any)
-	// Error logs an error message with optional key-value pairs
 	Error(msg string, args ...any)
-	// With returns a new logger with the given key-value pairs added to all log messages
 	With(args ...any) Logger
-	// WithContext returns a new logger with context
 	WithContext(ctx context.Context) Logger
 }
 
@@ -66,7 +60,6 @@ func (l Level) toSlogLevel() slog.Level {
 }
 
 // New creates a new logger using the standard library's slog.
-// If handler is nil, uses the default slog handler.
 func New(handler slog.Handler) Logger {
 	if handler == nil {
 		handler = slog.Default().Handler()
@@ -77,7 +70,6 @@ func New(handler slog.Handler) Logger {
 }
 
 // NewWithLevel creates a new logger with the specified minimum level.
-// Logs are written to stderr in JSON format.
 func NewWithLevel(level Level) Logger {
 	opts := &slog.HandlerOptions{
 		Level: level.toSlogLevel(),

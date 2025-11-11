@@ -51,7 +51,6 @@ func New(userAgent string, cacheTTL time.Duration, robotsCache cache.Cache, clie
 }
 
 // IsAllowed checks if the given URL can be crawled according to robots.txt rules.
-// Returns true if allowed, false if disallowed.
 func (c *Checker) IsAllowed(ctx context.Context, urlStr string) (bool, error) {
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
