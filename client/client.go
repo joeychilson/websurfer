@@ -28,7 +28,7 @@ type Client struct {
 	robotsChecker  *robots.Checker
 	limiter        *ratelimit.Limiter
 	parser         *parser.Registry
-	cache          cache.Cache
+	cache          *cache.Cache
 	logger         *slog.Logger
 	refreshing     sync.Map
 	userAgent      string
@@ -106,7 +106,7 @@ func NewFromFile(path string) (*Client, error) {
 }
 
 // WithCache sets the cache for response caching.
-func (c *Client) WithCache(responseCache cache.Cache) *Client {
+func (c *Client) WithCache(responseCache *cache.Cache) *Client {
 	c.cache = responseCache
 	return c
 }
@@ -121,105 +121,101 @@ func (c *Client) WithLogger(log *slog.Logger) *Client {
 func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	c.logger.Debug("fetch started", "url", urlStr)
 
-	if c.cache != nil {
-		entry, err := c.cache.Get(ctx, urlStr)
-		if err != nil {
-			c.logger.Error("cache get failed", "url", urlStr, "error", err)
-			entry = nil
-		}
-
-		if entry != nil {
-			if entry.IsFresh() {
-				c.logger.Debug("cache hit (fresh)", "url", urlStr)
-				return &Response{
-					URL:         entry.URL,
-					StatusCode:  entry.StatusCode,
-					Headers:     entry.Headers,
-					Body:        entry.Body,
-					Title:       entry.Title,
-					Description: entry.Description,
-					CacheState:  "hit",
-					CachedAt:    entry.StoredAt,
-				}, nil
-			}
-
-			if entry.IsStale() {
-				c.logger.Debug("cache hit (stale, refreshing in background)", "url", urlStr)
-				if _, loaded := c.refreshing.LoadOrStore(urlStr, struct{}{}); !loaded {
-					go func() {
-						defer func() {
-							c.refreshing.Delete(urlStr)
-							if r := recover(); r != nil {
-								c.logger.Error("background refresh panicked", "url", urlStr, "panic", r)
-							}
-						}()
-						c.logger.Debug("background refresh started", "url", urlStr)
-
-						refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-						defer cancel()
-
-						newEntry, err := c.fetchAndCacheConditional(refreshCtx, urlStr, entry.LastModified)
-						if err == nil && newEntry != nil {
-							if err := c.cache.Set(refreshCtx, newEntry); err != nil {
-								c.logger.Error("background refresh cache set failed", "url", urlStr, "error", err)
-							} else {
-								c.logger.Debug("background refresh completed with new content", "url", urlStr)
-							}
-						} else if err == nil && newEntry == nil {
-							c.logger.Debug("background refresh: content not modified", "url", urlStr)
-							updatedEntry := &cache.Entry{
-								URL:          entry.URL,
-								StatusCode:   entry.StatusCode,
-								Headers:      entry.Headers,
-								Body:         entry.Body,
-								Title:        entry.Title,
-								Description:  entry.Description,
-								LastModified: entry.LastModified,
-								StoredAt:     time.Now(),
-								TTL:          entry.TTL,
-								StaleTime:    entry.StaleTime,
-							}
-							if err := c.cache.Set(refreshCtx, updatedEntry); err != nil {
-								c.logger.Error("background refresh timestamp update failed", "url", urlStr, "error", err)
-							} else {
-								c.logger.Debug("background refresh completed (not modified)", "url", urlStr)
-							}
-						} else if err != nil {
-							c.logger.Error("background refresh failed", "url", urlStr, "error", err)
-						}
-					}()
-				} else {
-					c.logger.Debug("background refresh already in progress", "url", urlStr)
-				}
-
-				return &Response{
-					URL:         entry.URL,
-					StatusCode:  entry.StatusCode,
-					Headers:     entry.Headers,
-					Body:        entry.Body,
-					Title:       entry.Title,
-					Description: entry.Description,
-					CacheState:  "stale",
-					CachedAt:    entry.StoredAt,
-				}, nil
-			}
-
-			c.logger.Debug("cache entry too old", "url", urlStr)
-		} else {
-			c.logger.Debug("cache miss", "url", urlStr)
-		}
+	entry, err := c.cache.Get(ctx, urlStr)
+	if err != nil {
+		c.logger.Error("cache get failed", "url", urlStr, "error", err)
+		entry = nil
 	}
 
-	entry, err := c.fetchAndCache(ctx, urlStr)
+	if entry != nil {
+		if entry.IsFresh() {
+			c.logger.Debug("cache hit (fresh)", "url", urlStr)
+			return &Response{
+				URL:         entry.URL,
+				StatusCode:  entry.StatusCode,
+				Headers:     entry.Headers,
+				Body:        entry.Body,
+				Title:       entry.Title,
+				Description: entry.Description,
+				CacheState:  "hit",
+				CachedAt:    entry.StoredAt,
+			}, nil
+		}
+
+		if entry.IsStale() {
+			c.logger.Debug("cache hit (stale, refreshing in background)", "url", urlStr)
+			if _, loaded := c.refreshing.LoadOrStore(urlStr, struct{}{}); !loaded {
+				go func() {
+					defer func() {
+						c.refreshing.Delete(urlStr)
+						if r := recover(); r != nil {
+							c.logger.Error("background refresh panicked", "url", urlStr, "panic", r)
+						}
+					}()
+					c.logger.Debug("background refresh started", "url", urlStr)
+
+					refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+
+					newEntry, err := c.fetchAndCacheConditional(refreshCtx, urlStr, entry.LastModified)
+					if err == nil && newEntry != nil {
+						if err := c.cache.Set(refreshCtx, newEntry); err != nil {
+							c.logger.Error("background refresh cache set failed", "url", urlStr, "error", err)
+						} else {
+							c.logger.Debug("background refresh completed with new content", "url", urlStr)
+						}
+					} else if err == nil && newEntry == nil {
+						c.logger.Debug("background refresh: content not modified", "url", urlStr)
+						updatedEntry := &cache.Entry{
+							URL:          entry.URL,
+							StatusCode:   entry.StatusCode,
+							Headers:      entry.Headers,
+							Body:         entry.Body,
+							Title:        entry.Title,
+							Description:  entry.Description,
+							LastModified: entry.LastModified,
+							StoredAt:     time.Now(),
+							TTL:          entry.TTL,
+							StaleTime:    entry.StaleTime,
+						}
+						if err := c.cache.Set(refreshCtx, updatedEntry); err != nil {
+							c.logger.Error("background refresh timestamp update failed", "url", urlStr, "error", err)
+						} else {
+							c.logger.Debug("background refresh completed (not modified)", "url", urlStr)
+						}
+					} else if err != nil {
+						c.logger.Error("background refresh failed", "url", urlStr, "error", err)
+					}
+				}()
+			} else {
+				c.logger.Debug("background refresh already in progress", "url", urlStr)
+			}
+
+			return &Response{
+				URL:         entry.URL,
+				StatusCode:  entry.StatusCode,
+				Headers:     entry.Headers,
+				Body:        entry.Body,
+				Title:       entry.Title,
+				Description: entry.Description,
+				CacheState:  "stale",
+				CachedAt:    entry.StoredAt,
+			}, nil
+		}
+
+		c.logger.Debug("cache entry too old", "url", urlStr)
+	} else {
+		c.logger.Debug("cache miss", "url", urlStr)
+	}
+
+	entry, err = c.fetchAndCache(ctx, urlStr)
 	if err != nil {
 		c.logger.Error("fetch failed", "url", urlStr, "error", err)
 		return nil, err
 	}
 
-	if c.cache != nil && entry != nil {
-		if err := c.cache.Set(ctx, entry); err != nil {
-			c.logger.Error("cache set failed", "url", urlStr, "error", err)
-		}
+	if err := c.cache.Set(ctx, entry); err != nil {
+		c.logger.Error("cache set failed", "url", urlStr, "error", err)
 	}
 
 	c.logger.Info("fetch completed", "url", urlStr, "status_code", entry.StatusCode, "body_size", len(entry.Body))

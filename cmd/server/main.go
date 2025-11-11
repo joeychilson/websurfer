@@ -21,7 +21,7 @@ import (
 const (
 	defaultAddr       = ":8080"
 	defaultConfigFile = "./config.yaml"
-	defaultRedisURL   = ""
+	defaultRedisURL   = "redis://localhost:6379/0"
 	defaultLogLevel   = "info"
 )
 
@@ -62,25 +62,26 @@ func main() {
 
 	c = c.WithLogger(log)
 
-	// Create shared Redis client if configured
-	var redisClient *redis.Client
-	if cfg.redisURL != "" {
-		opts, err := redis.ParseURL(cfg.redisURL)
-		if err != nil {
-			log.Error("failed to parse redis URL", "error", err)
-			os.Exit(1)
-		}
-		redisClient = redis.NewClient(opts)
-		defer redisClient.Close()
-		log.Info("redis client created", "url", cfg.redisURL)
-
-		// Use Redis cache
-		cacheImpl := cache.NewRedisCache(redisClient, cache.RedisConfig{})
-		c = c.WithCache(cacheImpl)
-		log.Info("redis cache enabled")
-	} else {
-		log.Info("cache disabled (no redis URL configured)")
+	if cfg.redisURL == "" {
+		log.Error("redis URL is required")
+		os.Exit(1)
 	}
+
+	opts, err := redis.ParseURL(cfg.redisURL)
+	if err != nil {
+		log.Error("failed to parse redis URL", "error", err)
+		os.Exit(1)
+	}
+
+	redisClient := redis.NewClient(opts)
+	defer redisClient.Close()
+
+	log.Info("redis client created", "url", cfg.redisURL)
+
+	cacheImpl := cache.New(redisClient, cache.Config{})
+	c = c.WithCache(cacheImpl)
+
+	log.Info("redis cache enabled")
 
 	serverConfig := &api.ServerConfig{
 		RedisClient: redisClient,
@@ -142,7 +143,7 @@ func parseFlags() *appConfig {
 	flag.StringVar(&cfg.configFile, "config", getEnv("CONFIG_FILE", defaultConfigFile),
 		"Path to config file (optional)")
 	flag.StringVar(&cfg.redisURL, "redis-url", getEnv("REDIS_URL", defaultRedisURL),
-		"Redis URL (enables cache and distributed rate limiting)")
+		"Redis URL (required)")
 	flag.StringVar(&cfg.logLevel, "log-level", getEnv("LOG_LEVEL", defaultLogLevel),
 		"Log level: debug, info, warn, error")
 
@@ -154,7 +155,7 @@ func parseFlags() *appConfig {
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
 		fmt.Fprintf(os.Stderr, "  ADDR          HTTP server address (default: %s)\n", defaultAddr)
 		fmt.Fprintf(os.Stderr, "  CONFIG_FILE   Path to config file (default: %s)\n", defaultConfigFile)
-		fmt.Fprintf(os.Stderr, "  REDIS_URL     Redis URL for cache and rate limiting (optional)\n")
+		fmt.Fprintf(os.Stderr, "  REDIS_URL     Redis URL for cache and rate limiting (required)\n")
 		fmt.Fprintf(os.Stderr, "  LOG_LEVEL     Log level: debug, info, warn, error (default: %s)\n", defaultLogLevel)
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  %s\n", os.Args[0])
