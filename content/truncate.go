@@ -13,6 +13,13 @@ const (
 )
 
 var (
+	// charsPerTokenRatios defines the estimated characters per token for different content types.
+	// These ratios are empirically derived from typical content patterns:
+	// - HTML/XHTML (1.9): Lower ratio due to markup overhead (tags, attributes)
+	// - Plain text (1.7): Slightly lower due to natural language patterns
+	// - JSON (2.5): Higher ratio due to structured format with punctuation
+	// - XML (2.1): Moderate ratio with structured tags
+	// - Default (2.5): Conservative estimate for unknown types
 	charsPerTokenRatios = map[string]float64{
 		"text/html":             1.9,
 		"application/xhtml+xml": 1.9,

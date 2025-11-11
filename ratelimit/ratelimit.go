@@ -13,6 +13,13 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const (
+	// cleanupInterval is how often we check for inactive domain limiters
+	cleanupInterval = 10 * time.Minute
+	// inactiveThreshold is how long a domain must be inactive before cleanup
+	inactiveThreshold = 30 * time.Minute
+)
+
 // Limiter manages rate limiting for multiple domains.
 type Limiter struct {
 	config   config.RateLimitConfig
@@ -226,7 +233,7 @@ func parseRetryAfter(value string) time.Time {
 
 // cleanupInactiveDomains periodically removes limiters for domains that haven't been accessed recently.
 func (l *Limiter) cleanupInactiveDomains() {
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
 	for {
@@ -236,7 +243,7 @@ func (l *Limiter) cleanupInactiveDomains() {
 			now := time.Now()
 			for domain, dl := range l.limiters {
 				dl.mu.RLock()
-				inactive := now.Sub(dl.lastAccess) > 30*time.Minute
+				inactive := now.Sub(dl.lastAccess) > inactiveThreshold
 				dl.mu.RUnlock()
 
 				if inactive {

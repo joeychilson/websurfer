@@ -15,6 +15,8 @@ import (
 	urlpkg "github.com/joeychilson/websurfer/url"
 )
 
+const defaultChunkSize = 50000
+
 // FetchRequest represents a request to fetch and process a URL.
 type FetchRequest struct {
 	URL       string                `json:"url"`
@@ -195,7 +197,7 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *content.
 	if maxTokens > 0 {
 		chunkSize = end - start
 	} else if chunkSize == 0 {
-		chunkSize = 50000
+		chunkSize = defaultChunkSize
 	}
 
 	if start > 0 {

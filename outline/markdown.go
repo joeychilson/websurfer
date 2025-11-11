@@ -7,20 +7,20 @@ import (
 
 // extractMarkdown extracts outline from Markdown content
 func extractMarkdown(content string) *Outline {
+	lines := strings.Split(content, "\n")
+
 	outline := &Outline{
-		Headings: extractMarkdownHeadings(content),
-		Tables:   extractMarkdownTables(content),
-		Lists:    extractMarkdownLists(content),
+		Headings: extractMarkdownHeadings(lines, len(content)),
+		Tables:   extractMarkdownTables(lines),
+		Lists:    extractMarkdownLists(lines),
 	}
 
 	return outline
 }
 
 // extractMarkdownHeadings extracts # headings from markdown
-func extractMarkdownHeadings(content string) []Heading {
+func extractMarkdownHeadings(lines []string, contentLen int) []Heading {
 	headings := []Heading{}
-
-	lines := strings.Split(content, "\n")
 	charPos := 0
 
 	for _, line := range lines {
@@ -51,7 +51,6 @@ func extractMarkdownHeadings(content string) []Heading {
 		charPos += len(line) + 1
 	}
 
-	contentLen := len(content)
 	for i := range headings {
 		if i < len(headings)-1 {
 			headings[i].CharEnd = headings[i+1].CharStart
@@ -64,10 +63,8 @@ func extractMarkdownHeadings(content string) []Heading {
 }
 
 // extractMarkdownTables extracts table structures from markdown
-func extractMarkdownTables(content string) []Table {
+func extractMarkdownTables(lines []string) []Table {
 	tables := []Table{}
-
-	lines := strings.Split(content, "\n")
 	charPos := 0
 	inTable := false
 	tableStart := 0
@@ -147,10 +144,8 @@ func parseTableRow(line string) []string {
 }
 
 // extractMarkdownLists extracts lists from markdown
-func extractMarkdownLists(content string) []List {
+func extractMarkdownLists(lines []string) []List {
 	lists := []List{}
-
-	lines := strings.Split(content, "\n")
 	charPos := 0
 	inList := false
 	listStart := 0
