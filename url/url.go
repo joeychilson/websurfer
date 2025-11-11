@@ -125,10 +125,11 @@ func ParseAndValidate(rawURL string) (*url.URL, error) {
 }
 
 // ValidateExternal validates that a URL is external and not pointing to private/internal IP addresses.
-func ValidateExternal(rawURL string) error {
+// Returns the parsed URL if validation succeeds.
+func ValidateExternal(rawURL string) (*url.URL, error) {
 	parsedURL, err := ParseAndValidate(rawURL)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	host, _, err := net.SplitHostPort(parsedURL.Host)
@@ -141,23 +142,23 @@ func ValidateExternal(rawURL string) error {
 	ip := net.ParseIP(host)
 	if ip != nil {
 		if ip.IsLoopback() || ip.IsPrivate() {
-			return fmt.Errorf("requests to private IP addresses are not allowed")
+			return nil, fmt.Errorf("requests to private IP addresses are not allowed")
 		}
-		return nil
+		return parsedURL, nil
 	}
 
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		return nil
+		return parsedURL, nil
 	}
 
 	for _, resolvedIP := range ips {
 		if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() {
-			return fmt.Errorf("url resolves to private IP address: %s", host)
+			return nil, fmt.Errorf("url resolves to private IP address: %s", host)
 		}
 	}
 
-	return nil
+	return parsedURL, nil
 }
 
 // IsSameDomain checks if two URLs belong to the same domain (ignoring www).

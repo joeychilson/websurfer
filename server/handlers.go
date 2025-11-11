@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -265,7 +264,7 @@ func (s *Server) validateRequest(req *FetchRequest) error {
 		return fmt.Errorf("request cannot be nil")
 	}
 
-	if _, err := s.parseAndValidateExternalURL(req.URL); err != nil {
+	if _, err := urlpkg.ValidateExternal(req.URL); err != nil {
 		return err
 	}
 
@@ -286,13 +285,6 @@ func (s *Server) validateRequest(req *FetchRequest) error {
 	}
 
 	return nil
-}
-
-func (s *Server) parseAndValidateExternalURL(raw string) (*url.URL, error) {
-	if err := urlpkg.ValidateExternal(raw); err != nil {
-		return nil, err
-	}
-	return urlpkg.ParseAndValidate(raw)
 }
 
 func (s *Server) sendJSON(w http.ResponseWriter, data interface{}, statusCode int) {

@@ -29,51 +29,12 @@ var (
 
 // TruncateResult contains the truncation result.
 type TruncateResult struct {
-	// Content is the original content
-	Content string `json:"content"`
-	// Truncated is true if the content was truncated
-	Truncated bool `json:"truncated"`
-	// ReturnedChars is the number of characters returned
-	ReturnedChars int `json:"returned_chars"`
-	// ReturnedTokens is the number of tokens returned
-	ReturnedTokens int `json:"returned_tokens"`
-	// TotalChars is the total number of characters in the content
-	TotalChars int `json:"total_chars"`
-	// TotalTokens is the total number of tokens in the content
-	TotalTokens int `json:"total_tokens"`
-}
-
-// Truncate truncates content to fit within maxTokens using smart boundaries.
-func Truncate(content string, contentType string, maxTokens int) *TruncateResult {
-	totalChars := len(content)
-	totalTokens := EstimateTokens(content, contentType)
-
-	if totalTokens <= maxTokens {
-		return &TruncateResult{
-			Content:        content,
-			Truncated:      false,
-			ReturnedChars:  totalChars,
-			ReturnedTokens: totalTokens,
-			TotalChars:     totalChars,
-			TotalTokens:    totalTokens,
-		}
-	}
-
-	targetChars := charsForTokens(maxTokens, contentType)
-
-	truncateAt := findTruncationPoint(content, contentType, targetChars)
-
-	truncated := content[:truncateAt]
-	returnedTokens := EstimateTokens(truncated, contentType)
-
-	return &TruncateResult{
-		Content:        truncated,
-		Truncated:      true,
-		ReturnedChars:  truncateAt,
-		ReturnedTokens: returnedTokens,
-		TotalChars:     totalChars,
-		TotalTokens:    totalTokens,
-	}
+	Content        string `json:"content"`
+	Truncated      bool   `json:"truncated"`
+	ReturnedChars  int    `json:"returned_chars"`
+	ReturnedTokens int    `json:"returned_tokens"`
+	TotalChars     int    `json:"total_chars"`
+	TotalTokens    int    `json:"total_tokens"`
 }
 
 // TruncateBytes truncates content to fit within maxTokens using smart boundaries.
@@ -109,22 +70,6 @@ func TruncateBytes(content []byte, contentType string, maxTokens int) *TruncateR
 	}
 }
 
-// EstimateTokens estimates the number of tokens for given content.
-func EstimateTokens(content string, contentType string) int {
-	if content == "" {
-		return 0
-	}
-
-	ct := parser.NormalizeContentType(contentType)
-
-	ratio, exists := charsPerTokenRatios[ct]
-	if !exists {
-		ratio = charsPerTokenRatios["default"]
-	}
-
-	return int(float64(len(content)) / ratio)
-}
-
 // EstimateTokensBytes estimates the number of tokens for given content as bytes.
 func EstimateTokensBytes(content []byte, contentType string) int {
 	if len(content) == 0 {
@@ -151,71 +96,6 @@ func charsForTokens(targetTokens int, contentType string) int {
 	}
 
 	return int(float64(targetTokens) * ratio)
-}
-
-// findTruncationPoint finds a smart boundary to truncate at.
-func findTruncationPoint(content string, contentType string, targetChars int) int {
-	if targetChars >= len(content) {
-		return len(content)
-	}
-
-	ct := parser.NormalizeContentType(contentType)
-	if strings.HasPrefix(ct, "text/html") ||
-		strings.HasPrefix(ct, "application/xhtml") {
-		return findHTMLBoundary(content, targetChars)
-	}
-
-	return findWordBoundary(content, targetChars)
-}
-
-// findHTMLBoundary finds a good HTML truncation point near targetChars.
-func findHTMLBoundary(content string, targetChars int) int {
-	window := targetChars / htmlBoundaryWindowDivisor
-	searchStart := max(0, targetChars-window)
-	searchEnd := min(len(content), targetChars+window)
-
-	preferredTags := []string{
-		"</article>", "</section>", "</div>", "</main>",
-		"</header>", "</footer>", "</nav>", "</aside>",
-		"</p>", "</li>", "</tr>", "</h1>", "</h2>", "</h3>",
-		"</h4>", "</h5>", "</h6>", "</blockquote>", "</pre>",
-	}
-
-	bestPos := -1
-	for _, tag := range preferredTags {
-		pos := strings.LastIndex(content[searchStart:searchEnd], tag)
-		if pos != -1 {
-			absPos := searchStart + pos + len(tag)
-			if absPos > bestPos {
-				bestPos = absPos
-			}
-		}
-	}
-
-	if bestPos != -1 {
-		return bestPos
-	}
-
-	pos := strings.LastIndex(content[:searchEnd], ">")
-	if pos != -1 && pos > searchStart {
-		return pos + 1
-	}
-
-	return findWordBoundary(content, targetChars)
-}
-
-// findWordBoundary finds a word boundary near targetChars.
-func findWordBoundary(content string, targetChars int) int {
-	window := targetChars / wordBoundaryWindowDivisor
-	searchStart := max(0, targetChars-window)
-
-	for i := targetChars; i >= searchStart; i-- {
-		if i < len(content) && isWhitespace(content[i]) {
-			return i
-		}
-	}
-
-	return min(targetChars, len(content))
 }
 
 // isWhitespace checks if a character is whitespace.

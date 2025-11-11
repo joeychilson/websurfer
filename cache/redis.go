@@ -181,11 +181,6 @@ func (rc *RedisCache) Close() error {
 	return rc.client.Close()
 }
 
-// Ping checks if Redis connection is healthy.
-func (rc *RedisCache) Ping(ctx context.Context) error {
-	return rc.client.Ping(ctx).Err()
-}
-
 // makeKey creates a Redis key with the configured prefix.
 func (rc *RedisCache) makeKey(url string) string {
 	return rc.prefix + url

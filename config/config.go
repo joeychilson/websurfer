@@ -93,10 +93,8 @@ func (c *CacheConfig) IsStaleWhileRevalidateEnabled() bool {
 	return c.StaleTime > 0
 }
 
-// FetchConfig defines how to fetch webpages, including HTTP client settings,
-// browser automation, robots.txt compliance, and content format preferences.
+// FetchConfig defines how to fetch webpages, including HTTP client settings.
 type FetchConfig struct {
-	UseHeadless          bool              `yaml:"use_headless,omitempty"`
 	Timeout              time.Duration     `yaml:"timeout,omitempty"`
 	UserAgent            string            `yaml:"user_agent,omitempty"`
 	Headers              map[string]string `yaml:"headers,omitempty"`
@@ -500,8 +498,6 @@ func mergeCache(base, override CacheConfig) CacheConfig {
 
 func mergeFetch(base, override FetchConfig) FetchConfig {
 	result := base
-
-	result.UseHeadless = override.UseHeadless
 
 	if override.Timeout != 0 {
 		result.Timeout = override.Timeout

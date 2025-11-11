@@ -23,7 +23,6 @@ type Table struct {
 	RowCount  int      `json:"row_count"`
 	CharStart int      `json:"char_start"`
 	CharEnd   int      `json:"char_end"`
-	Caption   string   `json:"caption,omitempty"`
 }
 
 // List represents a list structure
