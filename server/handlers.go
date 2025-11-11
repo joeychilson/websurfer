@@ -245,7 +245,7 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *content.
 				Start: 0,
 				End:   totalLength,
 			},
-			Description: "Get entire document (warning: may be very large)",
+			Description: "Get entire document",
 		})
 	}
 

@@ -8,22 +8,19 @@ import (
 )
 
 const (
-	// htmlBoundaryWindowDivisor determines the search window size for HTML boundaries (1/10 = 10% of target chars).
 	htmlBoundaryWindowDivisor = 10
-	// wordBoundaryWindowDivisor determines the search window size for word boundaries (1/20 = 5% of target chars).
 	wordBoundaryWindowDivisor = 20
 )
 
 var (
-	// charsPerTokenRatios maps content types to their estimated chars-per-token ratio
 	charsPerTokenRatios = map[string]float64{
-		"text/html":             2.25,
-		"application/xhtml+xml": 2.25,
-		"text/plain":            2.0,
-		"application/json":      3.0,
-		"application/xml":       2.5,
-		"text/xml":              2.5,
-		"default":               3.0,
+		"text/html":             1.9,
+		"application/xhtml+xml": 1.9,
+		"text/plain":            1.7,
+		"application/json":      2.5,
+		"application/xml":       2.1,
+		"text/xml":              2.1,
+		"default":               2.5,
 	}
 )
 
