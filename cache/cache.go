@@ -48,21 +48,17 @@ type Cache struct {
 
 // Config holds cache configuration.
 type Config struct {
-	Prefix          string
-	TTL             time.Duration
-	StaleTime       time.Duration
-	CleanupInterval time.Duration
-	MaxEntries      int
+	Prefix    string
+	TTL       time.Duration
+	StaleTime time.Duration
 }
 
 // DefaultConfig returns a cache config with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		Prefix:          "websurfer:",
-		TTL:             5 * time.Minute,
-		StaleTime:       1 * time.Hour,
-		CleanupInterval: 10 * time.Minute,
-		MaxEntries:      1000,
+		Prefix:    "websurfer:",
+		TTL:       5 * time.Minute,
+		StaleTime: 1 * time.Hour,
 	}
 }
 
@@ -174,12 +170,5 @@ func applyDefaults(config Config) Config {
 	if config.StaleTime == 0 {
 		config.StaleTime = defaults.StaleTime
 	}
-	if config.CleanupInterval == 0 {
-		config.CleanupInterval = defaults.CleanupInterval
-	}
-	if config.MaxEntries == 0 {
-		config.MaxEntries = defaults.MaxEntries
-	}
-
 	return config
 }

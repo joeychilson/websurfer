@@ -7,69 +7,6 @@ import (
 	"strings"
 )
 
-// Normalize normalizes a URL for deduplication purposes.
-func Normalize(rawURL string) (string, error) {
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse URL: %w", err)
-	}
-
-	if parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return "", fmt.Errorf("not a valid absolute URL")
-	}
-
-	parsedURL.Fragment = ""
-
-	hostname := parsedURL.Hostname()
-	port := parsedURL.Port()
-
-	if after, ok := strings.CutPrefix(hostname, "www."); ok {
-		hostname = after
-	}
-
-	if parsedURL.Scheme == "http" {
-		if port == "80" {
-			port = ""
-		}
-		parsedURL.Scheme = "https"
-	}
-
-	if parsedURL.Scheme == "https" && port == "443" {
-		port = ""
-	}
-
-	if port != "" {
-		parsedURL.Host = hostname + ":" + port
-	} else {
-		parsedURL.Host = hostname
-	}
-
-	path := parsedURL.Path
-
-	indexFiles := []string{"/index.html", "/index.htm", "/index.php", "/index.shtml", "/index.xml"}
-	for _, indexFile := range indexFiles {
-		if strings.HasSuffix(path, indexFile) {
-			path = strings.TrimSuffix(path, indexFile)
-			if path == "" {
-				path = "/"
-			}
-			break
-		}
-	}
-
-	if len(path) > 1 && strings.HasSuffix(path, "/") {
-		path = strings.TrimSuffix(path, "/")
-	}
-
-	if path == "" {
-		path = "/"
-	}
-
-	parsedURL.Path = path
-
-	return parsedURL.String(), nil
-}
-
 // ParseAndValidate parses a URL string and validates it has a scheme and host.
 func ParseAndValidate(rawURL string) (*url.URL, error) {
 	if strings.TrimSpace(rawURL) == "" {
@@ -93,7 +30,6 @@ func ParseAndValidate(rawURL string) (*url.URL, error) {
 }
 
 // ValidateExternal validates that a URL is external and not pointing to private/internal IP addresses.
-// Returns the parsed URL if validation succeeds.
 func ValidateExternal(rawURL string) (*url.URL, error) {
 	parsedURL, err := ParseAndValidate(rawURL)
 	if err != nil {
@@ -149,62 +85,4 @@ func ExtractHost(urlStr string) (string, error) {
 	}
 
 	return parsedURL.Host, nil
-}
-
-// IsSameBaseDomain checks if two URLs belong to the same base/root domain.
-func IsSameBaseDomain(url1, url2 string) bool {
-	parsed1, err1 := url.Parse(url1)
-	parsed2, err2 := url.Parse(url2)
-
-	if err1 != nil || err2 != nil {
-		return false
-	}
-
-	base1 := extractBaseDomain(parsed1.Hostname())
-	base2 := extractBaseDomain(parsed2.Hostname())
-
-	return base1 != "" && base2 != "" && base1 == base2
-}
-
-// extractBaseDomain extracts the base/root domain from a hostname.
-func extractBaseDomain(hostname string) string {
-	if hostname == "" {
-		return ""
-	}
-
-	if net.ParseIP(hostname) != nil {
-		return hostname
-	}
-
-	if hostname == "localhost" {
-		return hostname
-	}
-
-	parts := strings.Split(hostname, ".")
-
-	if len(parts) < 2 {
-		return hostname
-	}
-
-	baseDomain := parts[len(parts)-2] + "." + parts[len(parts)-1]
-
-	if len(parts) >= 3 {
-		tld := parts[len(parts)-1]
-		sld := parts[len(parts)-2]
-
-		multiPartTLDs := map[string]bool{
-			"co":  true,
-			"com": true,
-			"gov": true,
-			"ac":  true,
-			"org": true,
-			"net": true,
-		}
-
-		if multiPartTLDs[sld] {
-			baseDomain = parts[len(parts)-3] + "." + sld + "." + tld
-		}
-	}
-
-	return baseDomain
 }

@@ -82,7 +82,10 @@ func New(cfg *config.Config) (*Client, error) {
 	parserRegistry.Register([]string{"text/html", "application/xhtml+xml"}, htmlParser)
 	parserRegistry.Register([]string{"application/pdf"}, pdfParser)
 
-	f := fetcher.New(cfg.Default.Fetch)
+	f, err := fetcher.New(cfg.Default.Fetch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create fetcher: %w", err)
+	}
 	robotsClient := f.GetHTTPClient()
 
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
@@ -162,7 +165,7 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 		c.logger.Debug("cache miss", "url", urlStr)
 	}
 
-	entry, err = c.fetchAndCache(ctx, urlStr)
+	entry, err = c.fetchAndCacheConditional(ctx, urlStr, "")
 	if err != nil {
 		c.logger.Error("fetch failed", "url", urlStr, "error", err)
 		return nil, err
@@ -269,28 +272,14 @@ func (c *Client) handleRefreshNotModified(ctx context.Context, urlStr string, en
 func (c *Client) FetchNoCache(ctx context.Context, urlStr string) (*Response, error) {
 	c.logger.Debug("fetch started (no cache)", "url", urlStr)
 
-	entry, err := c.fetchAndCache(ctx, urlStr)
+	entry, err := c.fetchAndCacheConditional(ctx, urlStr, "")
 	if err != nil {
 		c.logger.Error("fetch failed", "url", urlStr, "error", err)
 		return nil, err
 	}
 
 	c.logger.Info("fetch completed (no cache)", "url", urlStr, "status_code", entry.StatusCode, "body_size", len(entry.Body))
-	return &Response{
-		URL:         entry.URL,
-		StatusCode:  entry.StatusCode,
-		Headers:     entry.Headers,
-		Body:        entry.Body,
-		Title:       entry.Title,
-		Description: entry.Description,
-		CacheState:  "miss",
-		CachedAt:    time.Time{},
-	}, nil
-}
-
-// fetchAndCache performs the actual fetch operation with all protections.
-func (c *Client) fetchAndCache(ctx context.Context, urlStr string) (*cache.Entry, error) {
-	return c.fetchAndCacheConditional(ctx, urlStr, "")
+	return c.buildResponse(entry, "miss"), nil
 }
 
 // fetchAndCacheConditional performs the actual fetch operation with conditional request support.
@@ -354,7 +343,10 @@ func (c *Client) applyCrawlDelayToLimiter(urlStr string, crawlDelay time.Duratio
 
 // performFetch executes the HTTP fetch with retry logic.
 func (c *Client) performFetch(ctx context.Context, urlStr string, resolved config.ResolvedConfig, cachedLastModified string) (*fetcher.Response, error) {
-	f := fetcher.New(resolved.Fetch)
+	f, err := fetcher.New(resolved.Fetch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create fetcher: %w", err)
+	}
 	r := retry.New(f, c.limiter, resolved.Retry)
 
 	if cachedLastModified != "" {
@@ -373,7 +365,11 @@ func (c *Client) buildCacheEntry(ctx context.Context, urlStr string, fetcherResp
 	contentType := c.getFirstHeader(fetcherResp.Headers, "Content-Type")
 	lastModified := c.getFirstHeader(fetcherResp.Headers, "Last-Modified")
 
-	title, description := c.extractMetadata(contentType, fetcherResp.Body)
+	var title, description string
+	if strings.Contains(strings.ToLower(contentType), "html") && len(fetcherResp.Body) > 0 {
+		title, description = extractMetadataFromHTML(string(fetcherResp.Body))
+	}
+
 	body, err := c.parseContent(ctx, urlStr, contentType, fetcherResp.Body)
 	if err != nil {
 		return nil, err
@@ -397,14 +393,6 @@ func (c *Client) getFirstHeader(headers map[string][]string, key string) string 
 		return values[0]
 	}
 	return ""
-}
-
-// extractMetadata extracts title and description from HTML content.
-func (c *Client) extractMetadata(contentType string, body []byte) (string, string) {
-	if strings.Contains(strings.ToLower(contentType), "html") && len(body) > 0 {
-		return extractMetadataFromHTML(string(body))
-	}
-	return "", ""
 }
 
 // parseContent parses the response body using the appropriate parser.

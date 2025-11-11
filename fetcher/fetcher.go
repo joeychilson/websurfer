@@ -54,7 +54,7 @@ func (t *ssrfProtectedTransport) RoundTrip(req *http.Request) (*http.Response, e
 }
 
 // New creates a new Fetcher with the given configuration.
-func New(cfg config.FetchConfig) *Fetcher {
+func New(cfg config.FetchConfig) (*Fetcher, error) {
 	maxRedirects := cfg.GetMaxRedirects()
 
 	var transport http.RoundTripper = http.DefaultTransport
@@ -82,12 +82,13 @@ func New(cfg config.FetchConfig) *Fetcher {
 	for _, rewrite := range cfg.URLRewrites {
 		if rewrite.Type == "regex" {
 			re, err := regexp.Compile(rewrite.Pattern)
-			if err == nil {
-				compiledRewrites = append(compiledRewrites, &compiledRewrite{
-					regex:       re,
-					replacement: rewrite.Replacement,
-				})
+			if err != nil {
+				return nil, fmt.Errorf("invalid regex pattern %q in URL rewrite: %w", rewrite.Pattern, err)
 			}
+			compiledRewrites = append(compiledRewrites, &compiledRewrite{
+				regex:       re,
+				replacement: rewrite.Replacement,
+			})
 		}
 	}
 
@@ -95,12 +96,7 @@ func New(cfg config.FetchConfig) *Fetcher {
 		config:           cfg,
 		client:           client,
 		compiledRewrites: compiledRewrites,
-	}
-}
-
-// Fetch retrieves the content at the given URL.
-func (f *Fetcher) Fetch(ctx context.Context, urlStr string) (*Response, error) {
-	return f.FetchWithOptions(ctx, urlStr, nil)
+	}, nil
 }
 
 // FetchWithOptions retrieves the content at the given URL with optional fetch options.

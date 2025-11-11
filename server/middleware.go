@@ -30,36 +30,27 @@ func RateLimit(config RateLimitConfig) func(next http.Handler) http.Handler {
 		config = DefaultRateLimitConfig()
 	}
 
-	var rateLimiter *httprate.RateLimiter
+	limitHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":"rate limit exceeded","status_code":429}`))
+	}
 
+	baseOptions := []httprate.Option{
+		httprate.WithLimitHandler(limitHandler),
+		httprate.WithKeyByRealIP(),
+	}
+
+	var rateLimiter *httprate.RateLimiter
 	if config.RedisClient != nil {
 		redisConfig := &httprateredis.Config{
 			Client:    config.RedisClient,
 			PrefixKey: "websurfer:ratelimit",
 		}
-
-		rateLimiter = httprate.NewRateLimiter(
-			config.RequestLimit,
-			config.WindowDuration,
-			httprate.WithLimitHandler(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusTooManyRequests)
-				w.Write([]byte(`{"error":"rate limit exceeded","status_code":429}`))
-			}),
-			httprate.WithKeyByRealIP(),
-			httprateredis.WithRedisLimitCounter(redisConfig),
-		)
+		options := append(baseOptions, httprateredis.WithRedisLimitCounter(redisConfig))
+		rateLimiter = httprate.NewRateLimiter(config.RequestLimit, config.WindowDuration, options...)
 	} else {
-		rateLimiter = httprate.NewRateLimiter(
-			config.RequestLimit,
-			config.WindowDuration,
-			httprate.WithLimitHandler(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusTooManyRequests)
-				w.Write([]byte(`{"error":"rate limit exceeded","status_code":429}`))
-			}),
-			httprate.WithKeyByRealIP(),
-		)
+		rateLimiter = httprate.NewRateLimiter(config.RequestLimit, config.WindowDuration, baseOptions...)
 	}
 
 	return rateLimiter.Handler
