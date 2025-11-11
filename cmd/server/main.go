@@ -12,7 +12,7 @@ import (
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/client"
 	"github.com/joeychilson/websurfer/config"
-	api "github.com/joeychilson/websurfer/server"
+	"github.com/joeychilson/websurfer/server"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -32,13 +32,34 @@ type appConfig struct {
 
 func main() {
 	cfg := loadConfig()
-
 	log := setupLogger(cfg.logLevel)
 	log.Info("starting websurfer API server",
 		"addr", cfg.addr,
 		"log_level", cfg.logLevel,
 		"redis_url", cfg.redisURL)
 
+	c := setupClient(cfg, log)
+	defer c.Close()
+
+	redisClient := setupRedis(cfg, log)
+	defer redisClient.Close()
+
+	c = c.WithCache(cache.New(redisClient, cache.Config{}))
+	log.Info("redis cache enabled")
+
+	srv := setupServer(c, log, redisClient)
+	httpServer := createHTTPServer(cfg.addr, srv.Router())
+
+	if err := runServer(httpServer, log); err != nil {
+		log.Error("server error", "error", err)
+		os.Exit(1)
+	}
+
+	log.Info("server shutdown complete")
+}
+
+// setupClient creates and configures the websurfer client.
+func setupClient(cfg *appConfig, log *slog.Logger) *client.Client {
 	var c *client.Client
 	var err error
 
@@ -59,9 +80,11 @@ func main() {
 		}
 	}
 
-	c = c.WithLogger(log)
-	defer c.Close()
+	return c.WithLogger(log)
+}
 
+// setupRedis creates and configures the Redis client.
+func setupRedis(cfg *appConfig, log *slog.Logger) *redis.Client {
 	if cfg.redisURL == "" {
 		log.Error("redis URL is required")
 		os.Exit(1)
@@ -74,42 +97,42 @@ func main() {
 	}
 
 	redisClient := redis.NewClient(opts)
-	defer redisClient.Close()
-
 	log.Info("redis client created", "url", cfg.redisURL)
+	return redisClient
+}
 
-	cacheImpl := cache.New(redisClient, cache.Config{})
-	c = c.WithCache(cacheImpl)
-
-	log.Info("redis cache enabled")
-
-	serverConfig := &api.ServerConfig{
+// setupServer creates the API server with the given configuration.
+func setupServer(c *client.Client, log *slog.Logger, redisClient *redis.Client) *server.Server {
+	serverConfig := &server.ServerConfig{
 		RedisClient: redisClient,
 	}
 
-	srv := api.New(c, log, serverConfig)
+	srv, err := server.New(c, log, serverConfig)
+	if err != nil {
+		log.Error("failed to create server", "error", err)
+		os.Exit(1)
+	}
 
-	router := srv.Router()
+	return srv
+}
 
-	httpServer := &http.Server{
-		Addr:         cfg.addr,
-		Handler:      router,
+// createHTTPServer creates an HTTP server with standard timeouts.
+func createHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:         addr,
+		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+}
 
+// runServer starts the HTTP server and handles graceful shutdown.
+func runServer(httpServer *http.Server, log *slog.Logger) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		sig := <-sigChan
-		log.Info("received shutdown signal", "signal", sig.String())
-		cancel()
-	}()
+	setupSignalHandler(cancel, log)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -121,18 +144,36 @@ func main() {
 
 	select {
 	case <-ctx.Done():
-		log.Info("shutting down API server")
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer shutdownCancel()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			log.Error("server shutdown error", "error", err)
-		}
+		return gracefulShutdown(httpServer, log)
 	case err := <-errCh:
-		log.Error("server error", "error", err)
-		os.Exit(1)
+		return err
+	}
+}
+
+// setupSignalHandler configures OS signal handling for graceful shutdown.
+func setupSignalHandler(cancel context.CancelFunc, log *slog.Logger) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigChan
+		log.Info("received shutdown signal", "signal", sig.String())
+		cancel()
+	}()
+}
+
+// gracefulShutdown performs a graceful shutdown of the HTTP server.
+func gracefulShutdown(httpServer *http.Server, log *slog.Logger) error {
+	log.Info("shutting down API server")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Error("server shutdown error", "error", err)
+		return err
 	}
 
-	log.Info("server shutdown complete")
+	return nil
 }
 
 func loadConfig() *appConfig {

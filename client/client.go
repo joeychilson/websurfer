@@ -33,6 +33,8 @@ type Client struct {
 	refreshing     sync.Map
 	userAgent      string
 	robotsCacheTTL time.Duration
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // Response represents a fetched webpage with metadata.
@@ -83,6 +85,8 @@ func New(cfg *config.Config) (*Client, error) {
 	f := fetcher.New(cfg.Default.Fetch)
 	robotsClient := f.GetHTTPClient()
 
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+
 	return &Client{
 		config:         cfg,
 		robotsChecker:  robots.New(userAgent, robotsCacheTTL, robotsClient),
@@ -92,6 +96,8 @@ func New(cfg *config.Config) (*Client, error) {
 		logger:         slog.Default(),
 		userAgent:      userAgent,
 		robotsCacheTTL: robotsCacheTTL,
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
 	}, nil
 }
 
@@ -118,7 +124,12 @@ func (c *Client) WithLogger(log *slog.Logger) *Client {
 }
 
 // Close releases resources used by the client.
+// It must be called when the client is no longer needed to prevent goroutine leaks.
+// This will cancel any ongoing background refreshes and close the rate limiter.
 func (c *Client) Close() {
+	if c.shutdownCancel != nil {
+		c.shutdownCancel()
+	}
 	if c.limiter != nil {
 		c.limiter.Close()
 	}
@@ -137,77 +148,13 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	if entry != nil {
 		if entry.IsFresh() {
 			c.logger.Debug("cache hit (fresh)", "url", urlStr)
-			return &Response{
-				URL:         entry.URL,
-				StatusCode:  entry.StatusCode,
-				Headers:     entry.Headers,
-				Body:        entry.Body,
-				Title:       entry.Title,
-				Description: entry.Description,
-				CacheState:  "hit",
-				CachedAt:    entry.StoredAt,
-			}, nil
+			return c.buildResponse(entry, "hit"), nil
 		}
 
 		if entry.IsStale() {
 			c.logger.Debug("cache hit (stale, refreshing in background)", "url", urlStr)
-			if _, loaded := c.refreshing.LoadOrStore(urlStr, struct{}{}); !loaded {
-				go func() {
-					defer func() {
-						c.refreshing.Delete(urlStr)
-						if r := recover(); r != nil {
-							c.logger.Error("background refresh panicked", "url", urlStr, "panic", r)
-						}
-					}()
-					c.logger.Debug("background refresh started", "url", urlStr)
-
-					refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-
-					newEntry, err := c.fetchAndCacheConditional(refreshCtx, urlStr, entry.LastModified)
-					if err == nil && newEntry != nil {
-						if err := c.cache.Set(refreshCtx, newEntry); err != nil {
-							c.logger.Error("background refresh cache set failed", "url", urlStr, "error", err)
-						} else {
-							c.logger.Debug("background refresh completed with new content", "url", urlStr)
-						}
-					} else if err == nil && newEntry == nil {
-						c.logger.Debug("background refresh: content not modified", "url", urlStr)
-						updatedEntry := &cache.Entry{
-							URL:          entry.URL,
-							StatusCode:   entry.StatusCode,
-							Headers:      entry.Headers,
-							Body:         entry.Body,
-							Title:        entry.Title,
-							Description:  entry.Description,
-							LastModified: entry.LastModified,
-							StoredAt:     time.Now(),
-							TTL:          entry.TTL,
-							StaleTime:    entry.StaleTime,
-						}
-						if err := c.cache.Set(refreshCtx, updatedEntry); err != nil {
-							c.logger.Error("background refresh timestamp update failed", "url", urlStr, "error", err)
-						} else {
-							c.logger.Debug("background refresh completed (not modified)", "url", urlStr)
-						}
-					} else if err != nil {
-						c.logger.Error("background refresh failed", "url", urlStr, "error", err)
-					}
-				}()
-			} else {
-				c.logger.Debug("background refresh already in progress", "url", urlStr)
-			}
-
-			return &Response{
-				URL:         entry.URL,
-				StatusCode:  entry.StatusCode,
-				Headers:     entry.Headers,
-				Body:        entry.Body,
-				Title:       entry.Title,
-				Description: entry.Description,
-				CacheState:  "stale",
-				CachedAt:    entry.StoredAt,
-			}, nil
+			c.startBackgroundRefresh(urlStr, entry)
+			return c.buildResponse(entry, "stale"), nil
 		}
 
 		c.logger.Debug("cache entry too old", "url", urlStr)
@@ -226,6 +173,15 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	}
 
 	c.logger.Info("fetch completed", "url", urlStr, "status_code", entry.StatusCode, "body_size", len(entry.Body))
+	return c.buildResponse(entry, "miss"), nil
+}
+
+// buildResponse creates a Response from a cache Entry.
+func (c *Client) buildResponse(entry *cache.Entry, cacheState string) *Response {
+	cachedAt := entry.StoredAt
+	if cacheState == "miss" {
+		cachedAt = time.Time{}
+	}
 	return &Response{
 		URL:         entry.URL,
 		StatusCode:  entry.StatusCode,
@@ -233,9 +189,80 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 		Body:        entry.Body,
 		Title:       entry.Title,
 		Description: entry.Description,
-		CacheState:  "miss",
-		CachedAt:    time.Time{},
-	}, nil
+		CacheState:  cacheState,
+		CachedAt:    cachedAt,
+	}
+}
+
+// startBackgroundRefresh initiates a background refresh of stale cache content.
+func (c *Client) startBackgroundRefresh(urlStr string, entry *cache.Entry) {
+	if _, loaded := c.refreshing.LoadOrStore(urlStr, struct{}{}); !loaded {
+		go c.refreshInBackground(urlStr, entry)
+	} else {
+		c.logger.Debug("background refresh already in progress", "url", urlStr)
+	}
+}
+
+// refreshInBackground performs the actual background refresh work.
+func (c *Client) refreshInBackground(urlStr string, entry *cache.Entry) {
+	defer func() {
+		c.refreshing.Delete(urlStr)
+		if r := recover(); r != nil {
+			c.logger.Error("background refresh panicked", "url", urlStr, "panic", r)
+		}
+	}()
+
+	c.logger.Debug("background refresh started", "url", urlStr)
+
+	refreshCtx, cancel := context.WithTimeout(c.shutdownCtx, 30*time.Second)
+	defer cancel()
+
+	newEntry, err := c.fetchAndCacheConditional(refreshCtx, urlStr, entry.LastModified)
+	if err != nil {
+		if c.shutdownCtx.Err() != nil {
+			c.logger.Debug("background refresh cancelled due to shutdown", "url", urlStr)
+			return
+		}
+		c.logger.Error("background refresh failed", "url", urlStr, "error", err)
+		return
+	}
+
+	if newEntry != nil {
+		c.handleRefreshWithNewContent(refreshCtx, urlStr, newEntry)
+	} else {
+		c.handleRefreshNotModified(refreshCtx, urlStr, entry)
+	}
+}
+
+// handleRefreshWithNewContent stores newly fetched content from background refresh.
+func (c *Client) handleRefreshWithNewContent(ctx context.Context, urlStr string, newEntry *cache.Entry) {
+	if err := c.cache.Set(ctx, newEntry); err != nil {
+		c.logger.Error("background refresh cache set failed", "url", urlStr, "error", err)
+	} else {
+		c.logger.Debug("background refresh completed with new content", "url", urlStr)
+	}
+}
+
+// handleRefreshNotModified updates the cache timestamp when content hasn't changed.
+func (c *Client) handleRefreshNotModified(ctx context.Context, urlStr string, entry *cache.Entry) {
+	c.logger.Debug("background refresh: content not modified", "url", urlStr)
+	updatedEntry := &cache.Entry{
+		URL:          entry.URL,
+		StatusCode:   entry.StatusCode,
+		Headers:      entry.Headers,
+		Body:         entry.Body,
+		Title:        entry.Title,
+		Description:  entry.Description,
+		LastModified: entry.LastModified,
+		StoredAt:     time.Now(),
+		TTL:          entry.TTL,
+		StaleTime:    entry.StaleTime,
+	}
+	if err := c.cache.Set(ctx, updatedEntry); err != nil {
+		c.logger.Error("background refresh timestamp update failed", "url", urlStr, "error", err)
+	} else {
+		c.logger.Debug("background refresh completed (not modified)", "url", urlStr)
+	}
 }
 
 // FetchNoCache retrieves content from the given URL without using cache.
@@ -270,48 +297,16 @@ func (c *Client) fetchAndCache(ctx context.Context, urlStr string) (*cache.Entry
 func (c *Client) fetchAndCacheConditional(ctx context.Context, urlStr string, cachedLastModified string) (*cache.Entry, error) {
 	resolved := c.config.GetConfigForURL(urlStr)
 
-	var crawlDelay time.Duration
-	if resolved.Fetch.RespectRobotsTxt {
-		allowed, err := c.robotsChecker.IsAllowed(ctx, urlStr)
-		if err != nil {
-			c.logger.Error("robots.txt check failed", "url", urlStr, "error", err)
-			return nil, fmt.Errorf("robots.txt check failed: %w", err)
-		}
-		if !allowed {
-			c.logger.Warn("blocked by robots.txt", "url", urlStr)
-			return nil, fmt.Errorf("disallowed by robots.txt: %s", urlStr)
-		}
-
-		delay, err := c.robotsChecker.GetCrawlDelay(ctx, urlStr)
-		if err == nil && delay > 0 {
-			c.logger.Debug("applying crawl-delay from robots.txt", "url", urlStr, "delay", delay)
-			crawlDelay = delay
-			resolved = c.applyCrawlDelay(resolved, delay)
-		}
+	crawlDelay, err := c.checkRobotsTxt(ctx, urlStr, &resolved)
+	if err != nil {
+		return nil, err
 	}
 
 	if crawlDelay > 0 {
-		fakeHeaders := http.Header{}
-		fakeHeaders.Set("Retry-After", fmt.Sprintf("%.0f", crawlDelay.Seconds()))
-		c.limiter.UpdateRetryAfter(urlStr, fakeHeaders)
+		c.applyCrawlDelayToLimiter(urlStr, crawlDelay)
 	}
 
-	f := fetcher.New(resolved.Fetch)
-	r := retry.New(f, c.limiter, resolved.Retry)
-
-	var fetcherResp *fetcher.Response
-	var err error
-
-	if cachedLastModified != "" {
-		c.logger.Debug("using conditional request", "url", urlStr, "if_modified_since", cachedLastModified)
-		opts := &fetcher.FetchOptions{
-			IfModifiedSince: cachedLastModified,
-		}
-		fetcherResp, err = r.FetchWithOptions(ctx, urlStr, opts)
-	} else {
-		fetcherResp, err = r.Fetch(ctx, urlStr)
-	}
-
+	fetcherResp, err := c.performFetch(ctx, urlStr, resolved, cachedLastModified)
 	if err != nil {
 		return nil, err
 	}
@@ -321,38 +316,67 @@ func (c *Client) fetchAndCacheConditional(ctx context.Context, urlStr string, ca
 		return nil, nil
 	}
 
-	contentType := ""
-	if ct, ok := fetcherResp.Headers["Content-Type"]; ok && len(ct) > 0 {
-		contentType = ct[0]
+	return c.buildCacheEntry(ctx, urlStr, fetcherResp)
+}
+
+// checkRobotsTxt checks robots.txt and returns the crawl delay if configured.
+func (c *Client) checkRobotsTxt(ctx context.Context, urlStr string, resolved *config.ResolvedConfig) (time.Duration, error) {
+	if !resolved.Fetch.RespectRobotsTxt {
+		return 0, nil
 	}
 
-	lastModified := ""
-	if lm, ok := fetcherResp.Headers["Last-Modified"]; ok && len(lm) > 0 {
-		lastModified = lm[0]
+	allowed, err := c.robotsChecker.IsAllowed(ctx, urlStr)
+	if err != nil {
+		c.logger.Error("robots.txt check failed", "url", urlStr, "error", err)
+		return 0, fmt.Errorf("robots.txt check failed: %w", err)
+	}
+	if !allowed {
+		c.logger.Warn("blocked by robots.txt", "url", urlStr)
+		return 0, fmt.Errorf("disallowed by robots.txt: %s", urlStr)
 	}
 
-	title := ""
-	description := ""
-	if strings.Contains(strings.ToLower(contentType), "html") && len(fetcherResp.Body) > 0 {
-		title, description = extractMetadataFromHTML(string(fetcherResp.Body))
+	delay, err := c.robotsChecker.GetCrawlDelay(ctx, urlStr)
+	if err == nil && delay > 0 {
+		c.logger.Debug("applying crawl-delay from robots.txt", "url", urlStr, "delay", delay)
+		*resolved = c.applyCrawlDelay(*resolved, delay)
+		return delay, nil
 	}
 
-	body := fetcherResp.Body
-	if len(body) > 0 && c.parser.HasParser(contentType) {
-		c.logger.Debug("parsing content", "url", urlStr, "content_type", contentType, "original_size", len(body))
+	return 0, nil
+}
 
-		parserCtx := ctx
-		if urlStr != "" {
-			parserCtx = parser.WithURL(ctx, urlStr)
+// applyCrawlDelayToLimiter updates the rate limiter with the crawl delay.
+func (c *Client) applyCrawlDelayToLimiter(urlStr string, crawlDelay time.Duration) {
+	fakeHeaders := http.Header{}
+	fakeHeaders.Set("Retry-After", fmt.Sprintf("%.0f", crawlDelay.Seconds()))
+	c.limiter.UpdateRetryAfter(urlStr, fakeHeaders)
+}
+
+// performFetch executes the HTTP fetch with retry logic.
+func (c *Client) performFetch(ctx context.Context, urlStr string, resolved config.ResolvedConfig, cachedLastModified string) (*fetcher.Response, error) {
+	f := fetcher.New(resolved.Fetch)
+	r := retry.New(f, c.limiter, resolved.Retry)
+
+	if cachedLastModified != "" {
+		c.logger.Debug("using conditional request", "url", urlStr, "if_modified_since", cachedLastModified)
+		opts := &fetcher.FetchOptions{
+			IfModifiedSince: cachedLastModified,
 		}
+		return r.FetchWithOptions(ctx, urlStr, opts)
+	}
 
-		parsed, err := c.parser.Parse(parserCtx, contentType, body)
-		if err != nil {
-			c.logger.Error("failed to parse content", "url", urlStr, "content_type", contentType, "error", err)
-			return nil, fmt.Errorf("failed to parse content: %w", err)
-		}
-		c.logger.Debug("parsing completed", "url", urlStr, "original_size", len(body), "parsed_size", len(parsed))
-		body = parsed
+	return r.Fetch(ctx, urlStr)
+}
+
+// buildCacheEntry constructs a cache entry from the fetcher response.
+func (c *Client) buildCacheEntry(ctx context.Context, urlStr string, fetcherResp *fetcher.Response) (*cache.Entry, error) {
+	contentType := c.getFirstHeader(fetcherResp.Headers, "Content-Type")
+	lastModified := c.getFirstHeader(fetcherResp.Headers, "Last-Modified")
+
+	title, description := c.extractMetadata(contentType, fetcherResp.Body)
+	body, err := c.parseContent(ctx, urlStr, contentType, fetcherResp.Body)
+	if err != nil {
+		return nil, err
 	}
 
 	return &cache.Entry{
@@ -365,6 +389,45 @@ func (c *Client) fetchAndCacheConditional(ctx context.Context, urlStr string, ca
 		LastModified: lastModified,
 		StoredAt:     time.Now(),
 	}, nil
+}
+
+// getFirstHeader returns the first value of a header or empty string if not found.
+func (c *Client) getFirstHeader(headers map[string][]string, key string) string {
+	if values, ok := headers[key]; ok && len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
+// extractMetadata extracts title and description from HTML content.
+func (c *Client) extractMetadata(contentType string, body []byte) (string, string) {
+	if strings.Contains(strings.ToLower(contentType), "html") && len(body) > 0 {
+		return extractMetadataFromHTML(string(body))
+	}
+	return "", ""
+}
+
+// parseContent parses the response body using the appropriate parser.
+func (c *Client) parseContent(ctx context.Context, urlStr, contentType string, body []byte) ([]byte, error) {
+	if len(body) == 0 || !c.parser.HasParser(contentType) {
+		return body, nil
+	}
+
+	c.logger.Debug("parsing content", "url", urlStr, "content_type", contentType, "original_size", len(body))
+
+	parserCtx := ctx
+	if urlStr != "" {
+		parserCtx = parser.WithURL(ctx, urlStr)
+	}
+
+	parsed, err := c.parser.Parse(parserCtx, contentType, body)
+	if err != nil {
+		c.logger.Error("failed to parse content", "url", urlStr, "content_type", contentType, "error", err)
+		return nil, fmt.Errorf("failed to parse content: %w", err)
+	}
+
+	c.logger.Debug("parsing completed", "url", urlStr, "original_size", len(body), "parsed_size", len(parsed))
+	return parsed, nil
 }
 
 // applyCrawlDelay merges crawl-delay from robots.txt into the rate limit config.

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -27,7 +28,11 @@ type Server struct {
 }
 
 // New creates a new API server instance.
-func New(c *client.Client, log *slog.Logger, cfg *ServerConfig) *Server {
+func New(c *client.Client, log *slog.Logger, cfg *ServerConfig) (*Server, error) {
+	if c == nil {
+		return nil, fmt.Errorf("client cannot be nil")
+	}
+
 	if log == nil {
 		log = slog.Default()
 	}
@@ -54,7 +59,7 @@ func New(c *client.Client, log *slog.Logger, cfg *ServerConfig) *Server {
 		client:      c,
 		logger:      log,
 		rateLimiter: rateLimiter,
-	}
+	}, nil
 }
 
 // Router returns a configured chi.Mux with all routes and middleware.

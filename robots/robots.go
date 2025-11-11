@@ -177,93 +177,140 @@ func (c *Checker) fetchAndParse(ctx context.Context, robotsURL string) (*Rules, 
 // parseRobotsTxt parses robots.txt content for a specific user agent.
 func parseRobotsTxt(body interface{ Read([]byte) (int, error) }, userAgent string) (*Rules, time.Duration, error) {
 	scanner := bufio.NewScanner(body)
-
-	specificRules := &Rules{
-		UserAgent: userAgent,
-		Disallows: []string{},
-		Allows:    []string{},
-	}
-	wildcardRules := &Rules{
-		UserAgent: userAgent,
-		Disallows: []string{},
-		Allows:    []string{},
-	}
-
-	var specificCrawlDelay time.Duration
-	var wildcardCrawlDelay time.Duration
-	var currentUserAgent string
-	var matchesSpecific bool
-	var matchesWildcard bool
-	var foundSpecificMatch bool
+	parser := newRobotsParser(userAgent)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+		directive, value := parseRobotsLine(line)
+		if directive == "" {
 			continue
 		}
 
-		directive := strings.TrimSpace(strings.ToLower(parts[0]))
-		value := strings.TrimSpace(parts[1])
-
-		switch directive {
-		case "user-agent":
-			currentUserAgent = strings.ToLower(value)
-			if currentUserAgent == "*" {
-				matchesWildcard = true
-				matchesSpecific = false
-			} else if strings.Contains(strings.ToLower(userAgent), currentUserAgent) {
-				matchesSpecific = true
-				matchesWildcard = false
-				foundSpecificMatch = true
-			} else {
-				matchesSpecific = false
-				matchesWildcard = false
-			}
-
-		case "disallow":
-			if value != "" {
-				if matchesSpecific {
-					specificRules.Disallows = append(specificRules.Disallows, value)
-				} else if matchesWildcard {
-					wildcardRules.Disallows = append(wildcardRules.Disallows, value)
-				}
-			}
-
-		case "allow":
-			if value != "" {
-				if matchesSpecific {
-					specificRules.Allows = append(specificRules.Allows, value)
-				} else if matchesWildcard {
-					wildcardRules.Allows = append(wildcardRules.Allows, value)
-				}
-			}
-
-		case "crawl-delay":
-			if seconds, err := time.ParseDuration(value + "s"); err == nil {
-				if matchesSpecific && specificCrawlDelay == 0 {
-					specificCrawlDelay = seconds
-				} else if matchesWildcard && wildcardCrawlDelay == 0 {
-					wildcardCrawlDelay = seconds
-				}
-			}
-		}
+		parser.processDirective(directive, value)
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, 0, fmt.Errorf("failed to read robots.txt: %w", err)
 	}
 
-	if foundSpecificMatch {
-		return specificRules, specificCrawlDelay, nil
-	}
+	return parser.getResult()
+}
 
-	return wildcardRules, wildcardCrawlDelay, nil
+// robotsParser manages the state during robots.txt parsing.
+type robotsParser struct {
+	userAgent          string
+	specificRules      *Rules
+	wildcardRules      *Rules
+	specificCrawlDelay time.Duration
+	wildcardCrawlDelay time.Duration
+	matchesSpecific    bool
+	matchesWildcard    bool
+	foundSpecificMatch bool
+}
+
+// newRobotsParser creates a new robots.txt parser.
+func newRobotsParser(userAgent string) *robotsParser {
+	return &robotsParser{
+		userAgent: userAgent,
+		specificRules: &Rules{
+			UserAgent: userAgent,
+			Disallows: []string{},
+			Allows:    []string{},
+		},
+		wildcardRules: &Rules{
+			UserAgent: userAgent,
+			Disallows: []string{},
+			Allows:    []string{},
+		},
+	}
+}
+
+// parseRobotsLine extracts the directive and value from a robots.txt line.
+func parseRobotsLine(line string) (directive, value string) {
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return strings.TrimSpace(strings.ToLower(parts[0])), strings.TrimSpace(parts[1])
+}
+
+// processDirective handles a single robots.txt directive.
+func (p *robotsParser) processDirective(directive, value string) {
+	switch directive {
+	case "user-agent":
+		p.handleUserAgent(value)
+	case "disallow":
+		p.handleDisallow(value)
+	case "allow":
+		p.handleAllow(value)
+	case "crawl-delay":
+		p.handleCrawlDelay(value)
+	}
+}
+
+// handleUserAgent processes a User-agent directive.
+func (p *robotsParser) handleUserAgent(value string) {
+	currentUserAgent := strings.ToLower(value)
+	if currentUserAgent == "*" {
+		p.matchesWildcard = true
+		p.matchesSpecific = false
+	} else if strings.Contains(strings.ToLower(p.userAgent), currentUserAgent) {
+		p.matchesSpecific = true
+		p.matchesWildcard = false
+		p.foundSpecificMatch = true
+	} else {
+		p.matchesSpecific = false
+		p.matchesWildcard = false
+	}
+}
+
+// handleDisallow processes a Disallow directive.
+func (p *robotsParser) handleDisallow(value string) {
+	if value == "" {
+		return
+	}
+	if p.matchesSpecific {
+		p.specificRules.Disallows = append(p.specificRules.Disallows, value)
+	} else if p.matchesWildcard {
+		p.wildcardRules.Disallows = append(p.wildcardRules.Disallows, value)
+	}
+}
+
+// handleAllow processes an Allow directive.
+func (p *robotsParser) handleAllow(value string) {
+	if value == "" {
+		return
+	}
+	if p.matchesSpecific {
+		p.specificRules.Allows = append(p.specificRules.Allows, value)
+	} else if p.matchesWildcard {
+		p.wildcardRules.Allows = append(p.wildcardRules.Allows, value)
+	}
+}
+
+// handleCrawlDelay processes a Crawl-delay directive.
+func (p *robotsParser) handleCrawlDelay(value string) {
+	seconds, err := time.ParseDuration(value + "s")
+	if err != nil {
+		return
+	}
+	if p.matchesSpecific && p.specificCrawlDelay == 0 {
+		p.specificCrawlDelay = seconds
+	} else if p.matchesWildcard && p.wildcardCrawlDelay == 0 {
+		p.wildcardCrawlDelay = seconds
+	}
+}
+
+// getResult returns the final parsed rules and crawl delay.
+func (p *robotsParser) getResult() (*Rules, time.Duration, error) {
+	if p.foundSpecificMatch {
+		return p.specificRules, p.specificCrawlDelay, nil
+	}
+	return p.wildcardRules, p.wildcardCrawlDelay, nil
 }
 
 // isAllowed checks if a path is allowed according to the rules.
