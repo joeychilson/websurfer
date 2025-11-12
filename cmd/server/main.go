@@ -26,6 +26,9 @@ const (
 	httpWriteTimeout    = 120 * time.Second
 	httpIdleTimeout     = 60 * time.Second
 	httpShutdownTimeout = 10 * time.Second
+	redisConnectTimeout = 5 * time.Second
+	redisMaxRetries     = 3
+	redisRetryDelay     = 1 * time.Second
 )
 
 type appConfig struct {
@@ -89,7 +92,7 @@ func setupClient(cfg *appConfig, log *slog.Logger) *client.Client {
 	return c.WithLogger(log)
 }
 
-// setupRedis creates and configures the Redis client.
+// setupRedis creates and configures the Redis client with connectivity verification.
 func setupRedis(cfg *appConfig, log *slog.Logger) *redis.Client {
 	if cfg.redisURL == "" {
 		log.Error("redis URL is required")
@@ -103,8 +106,39 @@ func setupRedis(cfg *appConfig, log *slog.Logger) *redis.Client {
 	}
 
 	redisClient := redis.NewClient(opts)
-	log.Info("redis client created", "url", cfg.redisURL)
-	return redisClient
+
+	log.Info("connecting to redis", "url", cfg.redisURL, "timeout", redisConnectTimeout)
+
+	var lastErr error
+	for attempt := 1; attempt <= redisMaxRetries; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), redisConnectTimeout)
+		err := redisClient.Ping(ctx).Err()
+		cancel()
+
+		if err == nil {
+			log.Info("redis connection established", "url", cfg.redisURL, "attempt", attempt)
+			return redisClient
+		}
+
+		lastErr = err
+		log.Warn("redis connection failed",
+			"attempt", attempt,
+			"max_attempts", redisMaxRetries,
+			"error", err,
+			"url", cfg.redisURL)
+
+		if attempt < redisMaxRetries {
+			log.Info("retrying redis connection", "delay", redisRetryDelay)
+			time.Sleep(redisRetryDelay)
+		}
+	}
+
+	log.Error("failed to connect to redis after retries",
+		"attempts", redisMaxRetries,
+		"error", lastErr,
+		"url", cfg.redisURL)
+	os.Exit(1)
+	return nil
 }
 
 // setupServer creates the API server with the given configuration.

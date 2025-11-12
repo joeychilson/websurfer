@@ -121,10 +121,7 @@ type Response struct {
 func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	c.logger.Debug("fetch started", "url", urlStr)
 
-	entry, err := c.cacheManager.Get(ctx, urlStr)
-	if err != nil {
-		c.logger.Error("cache get failed", "url", urlStr, "error", err)
-	}
+	entry := c.cacheManager.Get(ctx, urlStr)
 
 	if entry != nil {
 		state := entry.GetState()
@@ -146,7 +143,7 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 		c.logger.Debug("cache miss", "url", urlStr)
 	}
 
-	entry, err = c.coordinator.Fetch(ctx, urlStr, "")
+	entry, err := c.coordinator.Fetch(ctx, urlStr, "")
 	if err != nil {
 		c.logger.Error("fetch failed", "url", urlStr, "error", err)
 		return nil, err

@@ -48,18 +48,18 @@ func (m *CacheManager) Close() {
 }
 
 // Get retrieves an entry from cache, returning nil if not found or on error.
-func (m *CacheManager) Get(ctx context.Context, urlStr string) (*cache.Entry, error) {
+func (m *CacheManager) Get(ctx context.Context, urlStr string) *cache.Entry {
 	if m.cache == nil {
-		return nil, nil
+		return nil
 	}
 
 	entry, err := m.cache.Get(ctx, urlStr)
 	if err != nil {
 		m.logger.Error("cache get failed", "url", urlStr, "error", err)
-		return nil, nil
+		return nil
 	}
 
-	return entry, nil
+	return entry
 }
 
 // Set stores an entry in cache, logging errors but not failing.
