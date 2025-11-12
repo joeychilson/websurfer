@@ -58,7 +58,7 @@ func New(cfg config.FetchConfig) (*Fetcher, error) {
 	maxRedirects := cfg.GetMaxRedirects()
 
 	var transport http.RoundTripper = http.DefaultTransport
-	if cfg.EnableSSRFProtection {
+	if cfg.GetEnableSSRFProtection() {
 		transport = &ssrfProtectedTransport{
 			base: http.DefaultTransport,
 		}

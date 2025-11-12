@@ -81,7 +81,7 @@ func (f *FetchCoordinator) Fetch(ctx context.Context, urlStr string, ifModifiedS
 
 // checkRobotsTxt checks robots.txt and returns the crawl delay if configured.
 func (f *FetchCoordinator) checkRobotsTxt(ctx context.Context, urlStr string, resolved *config.ResolvedConfig) (time.Duration, error) {
-	if !resolved.Fetch.RespectRobotsTxt {
+	if !resolved.Fetch.GetRespectRobotsTxt() {
 		return 0, nil
 	}
 
@@ -183,7 +183,8 @@ func (f *FetchCoordinator) parseContent(ctx context.Context, urlStr, contentType
 
 // applyCrawlDelay merges crawl-delay from robots.txt into the rate limit config.
 func (f *FetchCoordinator) applyCrawlDelay(resolved config.ResolvedConfig, crawlDelay time.Duration) config.ResolvedConfig {
-	resolved.RateLimit.RespectRetryAfter = true
+	respectRetryAfter := true
+	resolved.RateLimit.RespectRetryAfter = &respectRetryAfter
 
 	if resolved.RateLimit.Delay == 0 || crawlDelay > resolved.RateLimit.Delay {
 		resolved.RateLimit.Delay = crawlDelay

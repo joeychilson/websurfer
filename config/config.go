@@ -20,20 +20,20 @@ const (
 type patternType int
 
 const (
-	patternExact              patternType = iota
-	patternWildcardDomain                 // *.example.com
-	patternWildcardDomainPath             // *.example.com/path
-	patternWildcardHost                   // *example* or example* or *example
-	patternHostPath                       // example.com/path/* or host/path
+	patternExact patternType = iota
+	patternWildcardDomain
+	patternWildcardDomainPath
+	patternWildcardHost
+	patternHostPath
 )
 
 // compiledPattern holds pre-parsed pattern data for fast matching.
 type compiledPattern struct {
 	patternType patternType
 	original    string
-	domain      string // For domain patterns
-	host        string // For host patterns
-	path        string // For path patterns
+	domain      string
+	host        string
+	path        string
 }
 
 // compiledSiteConfig holds a site config with pre-compiled pattern.
@@ -44,18 +44,19 @@ type compiledSiteConfig struct {
 
 // Config represents the top-level configuration structure for the webpage retriever.
 type Config struct {
-	Default       DefaultConfig        `yaml:"default"`
-	Sites         []SiteConfig         `yaml:"sites"`
-	compiledSites []compiledSiteConfig // Pre-compiled patterns for fast matching
-	compiledOnce  bool                 // Track if compilation has been done
+	Default       DefaultConfig `yaml:"default"`
+	Sites         []SiteConfig  `yaml:"sites"`
+	compiledSites []compiledSiteConfig
+	compiledOnce  bool
 }
 
 // New returns a new Config with sensible defaults.
 func New() *Config {
+	followRedirects := true
 	return &Config{
 		Default: DefaultConfig{
 			Fetch: FetchConfig{
-				FollowRedirects: true,
+				FollowRedirects: &followRedirects,
 			},
 		},
 		Sites: []SiteConfig{},
@@ -71,7 +72,6 @@ type ResolvedConfig struct {
 }
 
 // GetConfigForURL returns the merged configuration for a given URL.
-// It uses pre-compiled patterns for efficient matching.
 func (c *Config) GetConfigForURL(url string) ResolvedConfig {
 	c.compilePatterns()
 
@@ -174,12 +174,36 @@ type FetchConfig struct {
 	Headers              map[string]string `yaml:"headers,omitempty"`
 	CheckFormats         []string          `yaml:"check_formats,omitempty"`
 	URLRewrites          []URLRewrite      `yaml:"url_rewrites,omitempty"`
-	RespectRobotsTxt     bool              `yaml:"respect_robots_txt,omitempty"`
+	RespectRobotsTxt     *bool             `yaml:"respect_robots_txt,omitempty"`
 	RobotsTxtCacheTTL    time.Duration     `yaml:"robots_txt_cache_ttl,omitempty"`
-	FollowRedirects      bool              `yaml:"follow_redirects,omitempty"`
+	FollowRedirects      *bool             `yaml:"follow_redirects,omitempty"`
 	MaxRedirects         int               `yaml:"max_redirects,omitempty"`
-	EnableSSRFProtection bool              `yaml:"enable_ssrf_protection,omitempty"`
+	EnableSSRFProtection *bool             `yaml:"enable_ssrf_protection,omitempty"`
 	MaxBodySize          int64             `yaml:"max_body_size,omitempty"`
+}
+
+// GetRespectRobotsTxt returns whether to respect robots.txt (default: false)
+func (f *FetchConfig) GetRespectRobotsTxt() bool {
+	if f.RespectRobotsTxt != nil {
+		return *f.RespectRobotsTxt
+	}
+	return false
+}
+
+// GetFollowRedirects returns whether to follow redirects (default: false)
+func (f *FetchConfig) GetFollowRedirects() bool {
+	if f.FollowRedirects != nil {
+		return *f.FollowRedirects
+	}
+	return false
+}
+
+// GetEnableSSRFProtection returns whether SSRF protection is enabled (default: false)
+func (f *FetchConfig) GetEnableSSRFProtection() bool {
+	if f.EnableSSRFProtection != nil {
+		return *f.EnableSSRFProtection
+	}
+	return false
 }
 
 // GetHeaders returns the headers to use for a request
@@ -207,7 +231,7 @@ func (f *FetchConfig) GetMaxRedirects() int {
 	if f.MaxRedirects > 0 {
 		return f.MaxRedirects
 	}
-	if !f.FollowRedirects {
+	if !f.GetFollowRedirects() {
 		return 0
 	}
 	return 10
@@ -243,7 +267,15 @@ type RateLimitConfig struct {
 	Burst             int           `yaml:"burst,omitempty"`
 	Delay             time.Duration `yaml:"delay,omitempty"`
 	MaxConcurrent     int           `yaml:"max_concurrent,omitempty"`
-	RespectRetryAfter bool          `yaml:"respect_retry_after,omitempty"`
+	RespectRetryAfter *bool         `yaml:"respect_retry_after,omitempty"`
+}
+
+// GetRespectRetryAfter returns whether to respect Retry-After headers (default: false)
+func (r *RateLimitConfig) GetRespectRetryAfter() bool {
+	if r.RespectRetryAfter != nil {
+		return *r.RespectRetryAfter
+	}
+	return false
 }
 
 // GetDelay returns the minimum delay between requests based on rate limits
@@ -259,7 +291,7 @@ func (r *RateLimitConfig) GetDelay() time.Duration {
 
 // IsEnabled returns true if any rate limiting is configured
 func (r *RateLimitConfig) IsEnabled() bool {
-	return r.RequestsPerSecond > 0 || r.Delay > 0 || r.MaxConcurrent > 0 || r.RespectRetryAfter
+	return r.RequestsPerSecond > 0 || r.Delay > 0 || r.MaxConcurrent > 0 || r.GetRespectRetryAfter()
 }
 
 // GetMaxConcurrent returns the max concurrent requests (default unlimited)
@@ -553,18 +585,26 @@ func mergeFetch(base, override FetchConfig) FetchConfig {
 		result.URLRewrites = override.URLRewrites
 	}
 
-	result.RespectRobotsTxt = override.RespectRobotsTxt
+	if override.RespectRobotsTxt != nil {
+		result.RespectRobotsTxt = override.RespectRobotsTxt
+	}
 	if override.RobotsTxtCacheTTL > 0 {
 		result.RobotsTxtCacheTTL = override.RobotsTxtCacheTTL
 	}
 
-	result.FollowRedirects = override.FollowRedirects
+	if override.FollowRedirects != nil {
+		result.FollowRedirects = override.FollowRedirects
+	}
 	if override.MaxRedirects > 0 {
 		result.MaxRedirects = override.MaxRedirects
 	}
 
-	if override.EnableSSRFProtection {
-		result.EnableSSRFProtection = true
+	if override.EnableSSRFProtection != nil {
+		result.EnableSSRFProtection = override.EnableSSRFProtection
+	}
+
+	if override.MaxBodySize > 0 {
+		result.MaxBodySize = override.MaxBodySize
 	}
 
 	return result
@@ -589,7 +629,9 @@ func mergeRateLimit(base, override RateLimitConfig) RateLimitConfig {
 		result.MaxConcurrent = override.MaxConcurrent
 	}
 
-	result.RespectRetryAfter = override.RespectRetryAfter
+	if override.RespectRetryAfter != nil {
+		result.RespectRetryAfter = override.RespectRetryAfter
+	}
 
 	return result
 }

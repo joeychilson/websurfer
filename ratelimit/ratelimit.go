@@ -1,22 +1,3 @@
-// Package ratelimit provides per-domain rate limiting with automatic cleanup
-// of inactive domain limiters.
-//
-// Lifecycle Management:
-//
-// Limiter instances MUST be explicitly closed by calling Close() when done
-// to prevent goroutine leaks. A finalizer is registered as a safety net, but
-// finalizers are not guaranteed to run and may run much later than desired.
-//
-// Example usage:
-//
-//	limiter := ratelimit.New(config)
-//	defer limiter.Close()
-//
-//	// Use the limiter...
-//	if err := limiter.Wait(ctx, url); err != nil {
-//	    return err
-//	}
-//	defer limiter.Release(url)
 package ratelimit
 
 import (
@@ -43,9 +24,6 @@ const (
 )
 
 // Limiter manages rate limiting for multiple domains.
-// The limiter MUST be closed by calling Close() when done to prevent goroutine leaks.
-// A finalizer is registered as a safety net, but explicit Close() calls are required
-// for deterministic cleanup.
 type Limiter struct {
 	config   config.RateLimitConfig
 	mu       sync.RWMutex
@@ -65,7 +43,6 @@ type domainLimiter struct {
 }
 
 // New creates a new rate limiter with the given configuration.
-// The returned Limiter must be closed by calling Close() to prevent goroutine leaks.
 func New(cfg config.RateLimitConfig) *Limiter {
 	l := &Limiter{
 		config:   cfg,
@@ -132,7 +109,7 @@ func (l *Limiter) UpdateRetryAfter(urlStr string, headers http.Header) {
 		return
 	}
 
-	if !l.config.RespectRetryAfter {
+	if !l.config.GetRespectRetryAfter() {
 		return
 	}
 

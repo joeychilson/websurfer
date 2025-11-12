@@ -50,7 +50,8 @@ func New(cfg *config.Config) (*Client, error) {
 	robotsChecker := robots.New(userAgent, robotsCacheTTL, robotsClient)
 
 	limiterConfig := cfg.Default.RateLimit
-	limiterConfig.RespectRetryAfter = true
+	respectRetryAfter := true
+	limiterConfig.RespectRetryAfter = &respectRetryAfter
 	limiter := ratelimit.New(limiterConfig)
 
 	htmlParser := htmlparser.New(
