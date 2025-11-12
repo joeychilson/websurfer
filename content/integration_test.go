@@ -94,9 +94,7 @@ func TestTruncateUTF8BoundarySafety(t *testing.T) {
 
 // TestTruncateTableRowIntegrity verifies pagination never splits table rows.
 // Incomplete tables break LLM data extraction.
-// TODO: Table row integrity not fully guaranteed yet
 func TestTruncateTableRowIntegrity(t *testing.T) {
-	t.Skip("TODO: Table row integrity needs refinement")
 	// Markdown table
 	table := `| Name | Age | City |
 |------|-----|------|

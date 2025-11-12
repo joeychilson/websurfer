@@ -64,6 +64,47 @@ func isWhitespace(ch byte) bool {
 	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
 }
 
+// isInsideMarkdownTable checks if a position is inside a markdown table.
+// Returns true if the line contains table pipe characters.
+func isInsideMarkdownTable(content []byte, pos int) bool {
+	if pos <= 0 || pos >= len(content) {
+		return false
+	}
+
+	lineStart := pos
+	for lineStart > 0 && content[lineStart-1] != '\n' {
+		lineStart--
+	}
+
+	lineEnd := pos
+	for lineEnd < len(content) && content[lineEnd] != '\n' {
+		lineEnd++
+	}
+
+	line := content[lineStart:lineEnd]
+
+	pipeCount := bytes.Count(line, []byte("|"))
+	return pipeCount >= 2
+}
+
+// findEndOfTableRow moves position to the end of the current table row.
+// This ensures we don't truncate in the middle of a markdown table row.
+func findEndOfTableRow(content []byte, pos int) int {
+	if pos >= len(content) {
+		return pos
+	}
+
+	for pos < len(content) && content[pos] != '\n' {
+		pos++
+	}
+
+	if pos < len(content) && content[pos] == '\n' {
+		pos++
+	}
+
+	return pos
+}
+
 // adjustToUTF8Boundary moves a position backward to the nearest valid UTF-8 character boundary.
 // This prevents splitting multi-byte UTF-8 characters (emoji, CJK, etc.)
 func adjustToUTF8Boundary(content []byte, pos int) int {
@@ -101,6 +142,10 @@ func findTruncationPoint(content []byte, contentType string, targetChars int) in
 		pos = findHTMLBoundary(content, targetChars)
 	} else {
 		pos = findWordBoundary(content, targetChars)
+	}
+
+	if isInsideMarkdownTable(content, pos) {
+		pos = findEndOfTableRow(content, pos)
 	}
 
 	return adjustToUTF8Boundary(content, pos)
