@@ -467,6 +467,15 @@ func (c *Config) validateFetch(ctx string, f FetchConfig) error {
 		return fmt.Errorf("%s.fetch: 'max_body_size' must be >= 0", ctx)
 	}
 
+	for i, format := range f.CheckFormats {
+		if format == "" {
+			return fmt.Errorf("%s.fetch.check_formats[%d]: format cannot be empty", ctx, i)
+		}
+		if !strings.HasPrefix(format, "/") && !strings.HasPrefix(format, ".") {
+			return fmt.Errorf("%s.fetch.check_formats[%d]: format must start with '/' (path) or '.' (extension), got %q", ctx, i, format)
+		}
+	}
+
 	for i, rewrite := range f.URLRewrites {
 		if rewrite.Pattern == "" {
 			return fmt.Errorf("%s.fetch.url_rewrites[%d]: 'pattern' cannot be empty", ctx, i)
