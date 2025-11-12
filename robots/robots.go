@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -175,7 +176,7 @@ func (c *Checker) fetchAndParse(ctx context.Context, robotsURL string) (*Rules, 
 }
 
 // parseRobotsTxt parses robots.txt content for a specific user agent.
-func parseRobotsTxt(body interface{ Read([]byte) (int, error) }, userAgent string) (*Rules, time.Duration, error) {
+func parseRobotsTxt(body io.Reader, userAgent string) (*Rules, time.Duration, error) {
 	scanner := bufio.NewScanner(body)
 	parser := newRobotsParser(userAgent)
 

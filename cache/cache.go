@@ -39,6 +39,13 @@ func (e *Entry) IsTooOld() bool {
 	return time.Since(e.StoredAt) >= (e.TTL + e.StaleTime)
 }
 
+// WithUpdatedTimestamp creates a copy of the entry with an updated StoredAt timestamp.
+func (e *Entry) WithUpdatedTimestamp() *Entry {
+	updated := *e
+	updated.StoredAt = time.Now()
+	return &updated
+}
+
 // Cache is a Redis-based cache implementation.
 type Cache struct {
 	client *redis.Client

@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/joeychilson/websurfer/config"
 	urlutil "github.com/joeychilson/websurfer/url"
-	"golang.org/x/time/rate"
 )
 
 const (

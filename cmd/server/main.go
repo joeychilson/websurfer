@@ -9,18 +9,23 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/client"
 	"github.com/joeychilson/websurfer/config"
 	"github.com/joeychilson/websurfer/server"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
-	defaultAddr       = ":8080"
-	defaultConfigFile = "./config.yaml"
-	defaultRedisURL   = "redis://localhost:6379/0"
-	defaultLogLevel   = "info"
+	defaultAddr         = ":8080"
+	defaultConfigFile   = "./config.yaml"
+	defaultRedisURL     = "redis://localhost:6379/0"
+	defaultLogLevel     = "info"
+	httpReadTimeout     = 30 * time.Second
+	httpWriteTimeout    = 120 * time.Second
+	httpIdleTimeout     = 60 * time.Second
+	httpShutdownTimeout = 10 * time.Second
 )
 
 type appConfig struct {
@@ -32,6 +37,7 @@ type appConfig struct {
 
 func main() {
 	cfg := loadConfig()
+
 	log := setupLogger(cfg.logLevel)
 	log.Info("starting websurfer API server",
 		"addr", cfg.addr,
@@ -121,9 +127,9 @@ func createHTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr:         addr,
 		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 120 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  httpReadTimeout,
+		WriteTimeout: httpWriteTimeout,
+		IdleTimeout:  httpIdleTimeout,
 	}
 }
 
@@ -165,7 +171,8 @@ func setupSignalHandler(cancel context.CancelFunc, log *slog.Logger) {
 // gracefulShutdown performs a graceful shutdown of the HTTP server.
 func gracefulShutdown(httpServer *http.Server, log *slog.Logger) error {
 	log.Info("shutting down API server")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 	defer shutdownCancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {

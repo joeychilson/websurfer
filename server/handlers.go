@@ -75,7 +75,7 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.processFetch(ctx, &req)
 	if err != nil {
 		s.logger.Error("fetch failed", "url", req.URL, "error", err)
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.sendError(w, fmt.Sprintf("failed to fetch %s: %v", req.URL, err), http.StatusInternalServerError)
 		return
 	}
 
@@ -99,61 +99,57 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) processFetch(ctx context.Context, req *FetchRequest) (*FetchResponse, error) {
 	fetched, err := s.client.Fetch(ctx, req.URL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch failed: %w", err)
+		return nil, err
 	}
 
-	workingBytes := fetched.Body
 	contentType := firstHeader(fetched.Headers, "Content-Type")
 	lastModified := firstHeader(fetched.Headers, "Last-Modified")
+	language := extractLanguageIfHTML(contentType, fetched.Body)
 
-	language := ""
-	if strings.Contains(strings.ToLower(contentType), "html") {
-		language = extractLanguage(string(fetched.Body))
-	}
-
+	workingBytes := fetched.Body
 	if req.Range != nil {
-		extracted, err := content.ExtractRangeBytes(workingBytes, req.Range)
+		workingBytes, err = content.ExtractRangeBytes(workingBytes, req.Range)
 		if err != nil {
 			return nil, fmt.Errorf("range extraction failed: %w", err)
 		}
-		workingBytes = extracted
 	}
 
 	if req.MaxTokens > 0 {
-		truncation := content.TruncateBytes(workingBytes, contentType, req.MaxTokens)
-
-		metadata := buildFetchMetadata(fetched, contentType, language, lastModified, truncation.ReturnedTokens)
-
-		start := 0
-		if req.Range != nil {
-			start = req.Range.Start
-		}
-		end := truncation.ReturnedChars
-		if req.Range != nil {
-			end = req.Range.Start + truncation.ReturnedChars
-		}
-
-		response := &FetchResponse{
-			Metadata:   metadata,
-			Content:    truncation.Content,
-			Navigation: buildNavigationForContent(start, end, len(fetched.Body), req.MaxTokens),
-		}
-
-		return response, nil
+		return s.buildTruncatedResponse(fetched, workingBytes, contentType, language, lastModified, req)
 	}
 
+	return s.buildFullResponse(fetched, workingBytes, contentType, language, lastModified, req)
+}
+
+// extractLanguageIfHTML extracts language from HTML content if applicable.
+func extractLanguageIfHTML(contentType string, body []byte) string {
+	if strings.Contains(strings.ToLower(contentType), "html") {
+		return extractLanguage(string(body))
+	}
+	return ""
+}
+
+// buildTruncatedResponse builds a response with truncated content for max_tokens requests.
+func (s *Server) buildTruncatedResponse(fetched *client.Response, workingBytes []byte, contentType, language, lastModified string, req *FetchRequest) (*FetchResponse, error) {
+	truncation := content.TruncateBytes(workingBytes, contentType, req.MaxTokens)
+	metadata := buildFetchMetadata(fetched, contentType, language, lastModified, truncation.ReturnedTokens)
+
+	start, end := calculateTruncationRange(req.Range, truncation.ReturnedChars)
+
+	return &FetchResponse{
+		Metadata:   metadata,
+		Content:    truncation.Content,
+		Navigation: buildNavigationForContent(start, end, len(fetched.Body), req.MaxTokens),
+	}, nil
+}
+
+// buildFullResponse builds a response with full content.
+func (s *Server) buildFullResponse(fetched *client.Response, workingBytes []byte, contentType, language, lastModified string, req *FetchRequest) (*FetchResponse, error) {
 	estimatedTokens := content.EstimateTokensBytes(workingBytes, contentType)
-
 	metadata := buildFetchMetadata(fetched, contentType, language, lastModified, estimatedTokens)
-
 	documentOutline := outline.ExtractBytes(workingBytes, "text/markdown")
 
-	start := 0
-	end := len(workingBytes)
-	if req.Range != nil {
-		start = req.Range.Start
-		end = req.Range.End
-	}
+	start, end := calculateFullRange(req.Range, len(workingBytes))
 
 	return &FetchResponse{
 		Metadata:   metadata,
@@ -161,6 +157,30 @@ func (s *Server) processFetch(ctx context.Context, req *FetchRequest) (*FetchRes
 		Outline:    documentOutline,
 		Navigation: buildNavigationForContent(start, end, len(workingBytes), 0),
 	}, nil
+}
+
+// calculateTruncationRange calculates the start and end positions for truncated content.
+func calculateTruncationRange(rangeOpt *content.RangeOptions, returnedChars int) (start, end int) {
+	start = 0
+	if rangeOpt != nil {
+		start = rangeOpt.Start
+	}
+	end = returnedChars
+	if rangeOpt != nil {
+		end = rangeOpt.Start + returnedChars
+	}
+	return start, end
+}
+
+// calculateFullRange calculates the start and end positions for full content.
+func calculateFullRange(rangeOpt *content.RangeOptions, totalLength int) (start, end int) {
+	start = 0
+	end = totalLength
+	if rangeOpt != nil {
+		start = rangeOpt.Start
+		end = rangeOpt.End
+	}
+	return start, end
 }
 
 func buildFetchMetadata(resp *client.Response, contentType, language, lastModified string, tokens int) Metadata {
@@ -193,13 +213,27 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *content.
 		Options: []content.NavigationOption{},
 	}
 
+	chunkSize := calculateChunkSize(start, end, maxTokens)
+
+	addPreviousNavigation(nav, start, chunkSize)
+	addNextNavigation(nav, end, totalLength, chunkSize)
+	addExpandNavigation(nav, start, end, totalLength, chunkSize)
+	addFullNavigation(nav, start, end, totalLength)
+
+	return nav
+}
+
+// calculateChunkSize determines the chunk size for navigation.
+func calculateChunkSize(start, end, maxTokens int) int {
 	chunkSize := end - start
-	if maxTokens > 0 {
-		chunkSize = end - start
-	} else if chunkSize == 0 {
+	if chunkSize == 0 && maxTokens == 0 {
 		chunkSize = defaultChunkSize
 	}
+	return chunkSize
+}
 
+// addPreviousNavigation adds a "previous" navigation option if applicable.
+func addPreviousNavigation(nav *content.Navigation, start, chunkSize int) {
 	if start > 0 {
 		prevStart := max(0, start-chunkSize)
 		nav.Options = append(nav.Options, content.NavigationOption{
@@ -212,7 +246,10 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *content.
 			Description: "Get previous chunk of content",
 		})
 	}
+}
 
+// addNextNavigation adds a "next" navigation option if applicable.
+func addNextNavigation(nav *content.Navigation, end, totalLength, chunkSize int) {
 	if end < totalLength {
 		nextEnd := min(totalLength, end+chunkSize)
 		nav.Options = append(nav.Options, content.NavigationOption{
@@ -225,7 +262,10 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *content.
 			Description: "Get next chunk of content",
 		})
 	}
+}
 
+// addExpandNavigation adds an "expand_forward" navigation option if applicable.
+func addExpandNavigation(nav *content.Navigation, start, end, totalLength, chunkSize int) {
 	if end < totalLength {
 		expandEnd := min(totalLength, end+chunkSize)
 		nav.Options = append(nav.Options, content.NavigationOption{
@@ -238,7 +278,10 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *content.
 			Description: "Expand current view to include more content",
 		})
 	}
+}
 
+// addFullNavigation adds a "full" navigation option if the view is partial.
+func addFullNavigation(nav *content.Navigation, start, end, totalLength int) {
 	if start > 0 || end < totalLength {
 		nav.Options = append(nav.Options, content.NavigationOption{
 			ID: "full",
@@ -250,8 +293,6 @@ func buildNavigationForContent(start, end, totalLength, maxTokens int) *content.
 			Description: "Get entire document",
 		})
 	}
-
-	return nav
 }
 
 func firstHeader(headers map[string][]string, key string) string {

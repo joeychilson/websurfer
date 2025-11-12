@@ -9,8 +9,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httplog/v3"
-	"github.com/joeychilson/websurfer/client"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/joeychilson/websurfer/client"
 )
 
 // ServerConfig holds configuration for the API server.
