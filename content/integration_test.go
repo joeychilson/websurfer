@@ -169,54 +169,6 @@ func TestTruncateDeterministicAcrossRuns(t *testing.T) {
 	}
 }
 
-// TestEstimateTokensVsActual documents token estimation accuracy.
-// This test helps identify if estimation drifts from real tokenizers.
-// TODO: These are aspirational targets - current estimation is approximate
-func TestEstimateTokensVsActual(t *testing.T) {
-	t.Skip("TODO: Token estimation is approximate, these are future accuracy targets")
-	tests := []struct {
-		content       string
-		contentType   string
-		expectedRange [2]int // [min, max] expected tokens
-		name          string
-	}{
-		{
-			content:       "The quick brown fox",
-			contentType:   "text/plain",
-			expectedRange: [2]int{4, 6},
-			name:          "simple_english",
-		},
-		{
-			content:       strings.Repeat("word ", 100),
-			contentType:   "text/plain",
-			expectedRange: [2]int{95, 105},
-			name:          "repeated_words",
-		},
-		{
-			content:       "<html><body><p>Test</p></body></html>",
-			contentType:   "text/html",
-			expectedRange: [2]int{8, 15},
-			name:          "html_content",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			estimated := EstimateTokens([]byte(tt.content), tt.contentType)
-
-			// Verify estimate is in reasonable range
-			assert.GreaterOrEqual(t, estimated, tt.expectedRange[0],
-				"token estimate too low")
-			assert.LessOrEqual(t, estimated, tt.expectedRange[1],
-				"token estimate too high")
-
-			// Log actual estimate for manual review
-			t.Logf("Content: %s, Estimated tokens: %d, Expected range: %d-%d",
-				tt.name, estimated, tt.expectedRange[0], tt.expectedRange[1])
-		})
-	}
-}
-
 // TestTruncateMaxTokensRespected verifies returned content stays within token limit.
 // LLMs have strict context windows - exceeding them causes errors.
 func TestTruncateMaxTokensRespected(t *testing.T) {
@@ -240,9 +192,7 @@ func TestTruncateMaxTokensRespected(t *testing.T) {
 
 // TestTruncateCodeBlockIntegrity verifies code blocks are never split.
 // Broken code blocks confuse LLMs trying to extract/execute code.
-// TODO: Code block integrity needs improvement
 func TestTruncateCodeBlockIntegrity(t *testing.T) {
-	t.Skip("TODO: Code block fence balancing needs refinement")
 	content := []byte(`
 # Code Example
 

@@ -105,6 +105,78 @@ func findEndOfTableRow(content []byte, pos int) int {
 	return pos
 }
 
+// isInsideCodeBlock checks if a position is inside a markdown code block.
+// Returns true if there's an odd number of ``` fences before this position.
+func isInsideCodeBlock(content []byte, pos int) bool {
+	if pos <= 0 {
+		return false
+	}
+
+	fence := []byte("```")
+	fenceCount := 0
+
+	searchPos := 0
+	for searchPos < pos {
+		idx := bytes.Index(content[searchPos:pos], fence)
+		if idx == -1 {
+			break
+		}
+
+		absIdx := searchPos + idx
+
+		atLineStart := absIdx == 0 || content[absIdx-1] == '\n'
+		if atLineStart {
+			fenceCount++
+		}
+
+		searchPos = absIdx + len(fence)
+	}
+
+	return fenceCount%2 == 1
+}
+
+// findEndOfCodeBlock moves position to the end of the current code block.
+// This ensures we don't truncate in the middle of a code block.
+func findEndOfCodeBlock(content []byte, pos int) int {
+	if pos >= len(content) {
+		return pos
+	}
+
+	fence := []byte("```")
+
+	for pos < len(content) && content[pos] != '\n' {
+		pos++
+	}
+	if pos < len(content) && content[pos] == '\n' {
+		pos++
+	}
+
+	for pos < len(content) {
+		idx := bytes.Index(content[pos:], fence)
+		if idx == -1 {
+			return len(content)
+		}
+
+		absIdx := pos + idx
+
+		atLineStart := absIdx == 0 || content[absIdx-1] == '\n'
+		if atLineStart {
+			pos = absIdx + len(fence)
+			for pos < len(content) && content[pos] != '\n' {
+				pos++
+			}
+			if pos < len(content) && content[pos] == '\n' {
+				pos++
+			}
+			return pos
+		}
+
+		pos = absIdx + len(fence)
+	}
+
+	return len(content)
+}
+
 // adjustToUTF8Boundary moves a position backward to the nearest valid UTF-8 character boundary.
 // This prevents splitting multi-byte UTF-8 characters (emoji, CJK, etc.)
 func adjustToUTF8Boundary(content []byte, pos int) int {
@@ -146,6 +218,10 @@ func findTruncationPoint(content []byte, contentType string, targetChars int) in
 
 	if isInsideMarkdownTable(content, pos) {
 		pos = findEndOfTableRow(content, pos)
+	}
+
+	if isInsideCodeBlock(content, pos) {
+		pos = findEndOfCodeBlock(content, pos)
 	}
 
 	return adjustToUTF8Boundary(content, pos)
