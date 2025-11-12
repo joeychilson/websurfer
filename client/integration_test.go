@@ -2,13 +2,18 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/config"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -165,14 +170,90 @@ func TestClientConcurrentFetches(t *testing.T) {
 // TestClientCacheStaleBehavior verifies stale cache returns immediately.
 // CRITICAL: Stale content should be returned instantly while refresh happens in background.
 func TestClientCacheStaleBehavior(t *testing.T) {
-	t.Skip("Requires cache implementation and background refresh - integration test for future implementation")
+	var fetchCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("User-agent: *\nAllow: /\n"))
+			return
+		}
 
-	// TODO: This test would verify:
+		if r.URL.Path == "/page" {
+			count := fetchCount.Add(1)
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+			w.WriteHeader(http.StatusOK)
+			// Return different content based on fetch count
+			w.Write([]byte(fmt.Sprintf("Version %d", count)))
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	// Create in-memory Redis server for testing
+	mr := miniredis.RunT(t)
+	defer mr.Close()
+
+	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer redisClient.Close()
+
+	ctx := context.Background()
+	cacheConfig := cache.Config{
+		Prefix:    "test:stale:",
+		TTL:       100 * time.Millisecond, // Very short TTL
+		StaleTime: 5 * time.Second,        // Allow stale for 5s
+	}
+	cacheInstance := cache.New(redisClient, cacheConfig)
+
+	client, err := New(nil)
+	require.NoError(t, err)
+	defer client.Close()
+
+	// Set the cache
+	client.WithCache(cacheInstance)
+
 	// 1. First fetch populates cache
-	// 2. Wait for TTL to expire (entry becomes stale)
-	// 3. Second fetch returns stale content immediately (< 10ms)
-	// 4. Background refresh updates cache
-	// 5. Third fetch gets fresh content
+	resp1, err := client.Fetch(ctx, server.URL+"/page")
+	require.NoError(t, err)
+	assert.Equal(t, "Version 1", string(resp1.Body))
+	assert.Equal(t, "miss", resp1.CacheState)
+	assert.Equal(t, int32(1), fetchCount.Load())
+
+	// 2. Immediate second fetch should return fresh from cache
+	resp2, err := client.Fetch(ctx, server.URL+"/page")
+	require.NoError(t, err)
+	assert.Equal(t, "Version 1", string(resp2.Body))
+	assert.Equal(t, "hit", resp2.CacheState)
+	assert.Equal(t, int32(1), fetchCount.Load(), "should not fetch again (cache fresh)")
+
+	// 3. Wait for TTL to expire (entry becomes stale)
+	time.Sleep(150 * time.Millisecond)
+
+	// 4. Third fetch should return stale content immediately (< 10ms)
+	start := time.Now()
+	resp3, err := client.Fetch(ctx, server.URL+"/page")
+	staleDuration := time.Since(start)
+
+	require.NoError(t, err)
+	assert.Equal(t, "Version 1", string(resp3.Body), "should return stale content immediately")
+	assert.Equal(t, "stale", resp3.CacheState, "cache state should be stale")
+	assert.Less(t, staleDuration, 50*time.Millisecond, "stale response should be instant")
+
+	// 5. Wait for background refresh to complete (be generous with timing)
+	time.Sleep(1 * time.Second)
+
+	// 6. Fourth fetch should get refreshed content from cache
+	resp4, err := client.Fetch(ctx, server.URL+"/page")
+	require.NoError(t, err)
+	assert.Equal(t, "Version 2", string(resp4.Body), "should have refreshed content")
+	// Note: Could be "hit" or "stale" depending on timing - the key is content was refreshed
+	assert.Contains(t, []string{"hit", "stale"}, resp4.CacheState, "should have cache state")
+	assert.Equal(t, int32(2), fetchCount.Load(), "background refresh should have fetched once")
+
+	t.Logf("Stale response returned in %v (target: < 50ms)", staleDuration)
 }
 
 // TestClientFetchWithConditionalRequest verifies If-Modified-Since handling.
