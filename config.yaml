@@ -4,6 +4,9 @@ default:
   cache:
     ttl: 1h
     stale_time: 24h
+    enable_compression: true
+    compression_level: 6
+    compression_min_size: 1024
   # Fetch configuration
   fetch:
     user_agent: "websurfer/1.0 (webpage retriever; +https://github.com/joeychilson/websurfer)"
@@ -31,6 +34,7 @@ sites:
     cache:
       ttl: 24h
       stale_time: 168h
+      compression_level: 9
     fetch:
       user_agent: "websurfer/1.0 contact@websurfer.dev"
       timeout: 60s
