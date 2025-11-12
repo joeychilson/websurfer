@@ -9,6 +9,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// State represents the cache state of an entry.
+type State int
+
+const (
+	// StateFresh indicates the entry is within its TTL.
+	StateFresh State = iota
+	// StateStale indicates the entry is past TTL but within the stale window.
+	StateStale
+	// StateTooOld indicates the entry is past both TTL and stale window.
+	StateTooOld
+)
+
 // Entry represents a cached response.
 type Entry struct {
 	URL          string
@@ -21,6 +33,22 @@ type Entry struct {
 	StoredAt     time.Time
 	TTL          time.Duration
 	StaleTime    time.Duration
+}
+
+// GetState returns the current state of the cache entry, computing the age only once
+// to avoid race conditions between state checks.
+func (e *Entry) GetState() State {
+	age := time.Since(e.StoredAt)
+
+	if age < e.TTL {
+		return StateFresh
+	}
+
+	if age < (e.TTL + e.StaleTime) {
+		return StateStale
+	}
+
+	return StateTooOld
 }
 
 // IsFresh returns true if the entry is still within its TTL.
@@ -97,7 +125,7 @@ func (c *Cache) Get(ctx context.Context, url string) (*Entry, error) {
 		return nil, fmt.Errorf("failed to unmarshal entry: %w", err)
 	}
 
-	if entry.IsTooOld() {
+	if entry.GetState() == StateTooOld {
 		c.client.Del(ctx, key)
 		return nil, nil
 	}

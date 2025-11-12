@@ -126,19 +126,22 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 		c.logger.Error("cache get failed", "url", urlStr, "error", err)
 	}
 
-	if entry != nil && entry.IsFresh() {
-		c.logger.Debug("cache hit (fresh)", "url", urlStr)
-		return buildResponse(entry, "hit"), nil
-	}
-
-	if entry != nil && entry.IsStale() {
-		c.logger.Debug("cache hit (stale, refreshing in background)", "url", urlStr)
-		c.cacheManager.StartBackgroundRefresh(urlStr, entry)
-		return buildResponse(entry, "stale"), nil
-	}
-
 	if entry != nil {
-		c.logger.Debug("cache entry too old", "url", urlStr)
+		state := entry.GetState()
+
+		switch state {
+		case cache.StateFresh:
+			c.logger.Debug("cache hit (fresh)", "url", urlStr)
+			return buildResponse(entry, "hit"), nil
+
+		case cache.StateStale:
+			c.logger.Debug("cache hit (stale, refreshing in background)", "url", urlStr)
+			c.cacheManager.StartBackgroundRefresh(urlStr, entry)
+			return buildResponse(entry, "stale"), nil
+
+		case cache.StateTooOld:
+			c.logger.Debug("cache entry too old", "url", urlStr)
+		}
 	} else {
 		c.logger.Debug("cache miss", "url", urlStr)
 	}
