@@ -12,25 +12,6 @@ const (
 	wordBoundaryWindowDivisor = 20
 )
 
-var (
-	// charsPerTokenRatios defines the estimated characters per token for different content types.
-	// These ratios are empirically derived from typical content patterns:
-	// - HTML/XHTML (1.9): Lower ratio due to markup overhead (tags, attributes)
-	// - Plain text (1.7): Slightly lower due to natural language patterns
-	// - JSON (2.5): Higher ratio due to structured format with punctuation
-	// - XML (2.1): Moderate ratio with structured tags
-	// - Default (2.5): Conservative estimate for unknown types
-	charsPerTokenRatios = map[string]float64{
-		"text/html":             1.9,
-		"application/xhtml+xml": 1.9,
-		"text/plain":            1.7,
-		"application/json":      2.5,
-		"application/xml":       2.1,
-		"text/xml":              2.1,
-		"default":               2.5,
-	}
-)
-
 // TruncateResult contains the truncation result.
 type TruncateResult struct {
 	Content        string `json:"content"`
@@ -42,9 +23,9 @@ type TruncateResult struct {
 }
 
 // TruncateBytes truncates content to fit within maxTokens using smart boundaries.
-func TruncateBytes(content []byte, contentType string, maxTokens int) *TruncateResult {
+func Truncate(content []byte, contentType string, maxTokens int) *TruncateResult {
 	totalChars := len(content)
-	totalTokens := EstimateTokensBytes(content, contentType)
+	totalTokens := EstimateTokens(content, contentType)
 
 	if totalTokens <= maxTokens {
 		return &TruncateResult{
@@ -59,10 +40,10 @@ func TruncateBytes(content []byte, contentType string, maxTokens int) *TruncateR
 
 	targetChars := charsForTokens(maxTokens, contentType)
 
-	truncateAt := findTruncationPointBytes(content, contentType, targetChars)
+	truncateAt := findTruncationPoint(content, contentType, targetChars)
 
 	truncated := content[:truncateAt]
-	returnedTokens := EstimateTokensBytes(truncated, contentType)
+	returnedTokens := EstimateTokens(truncated, contentType)
 
 	return &TruncateResult{
 		Content:        string(truncated),
@@ -74,41 +55,13 @@ func TruncateBytes(content []byte, contentType string, maxTokens int) *TruncateR
 	}
 }
 
-// EstimateTokensBytes estimates the number of tokens for given content as bytes.
-func EstimateTokensBytes(content []byte, contentType string) int {
-	if len(content) == 0 {
-		return 0
-	}
-
-	ct := parser.NormalizeContentType(contentType)
-
-	ratio, exists := charsPerTokenRatios[ct]
-	if !exists {
-		ratio = charsPerTokenRatios["default"]
-	}
-
-	return int(float64(len(content)) / ratio)
-}
-
-// charsForTokens calculates how many characters are needed for target token count.
-func charsForTokens(targetTokens int, contentType string) int {
-	ct := parser.NormalizeContentType(contentType)
-
-	ratio, exists := charsPerTokenRatios[ct]
-	if !exists {
-		ratio = charsPerTokenRatios["default"]
-	}
-
-	return int(float64(targetTokens) * ratio)
-}
-
 // isWhitespace checks if a character is whitespace.
 func isWhitespace(ch byte) bool {
 	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
 }
 
 // findTruncationPointBytes finds a smart boundary to truncate at for bytes.
-func findTruncationPointBytes(content []byte, contentType string, targetChars int) int {
+func findTruncationPoint(content []byte, contentType string, targetChars int) int {
 	if targetChars >= len(content) {
 		return len(content)
 	}
@@ -116,14 +69,14 @@ func findTruncationPointBytes(content []byte, contentType string, targetChars in
 	ct := parser.NormalizeContentType(contentType)
 	if strings.HasPrefix(ct, "text/html") ||
 		strings.HasPrefix(ct, "application/xhtml") {
-		return findHTMLBoundaryBytes(content, targetChars)
+		return findHTMLBoundary(content, targetChars)
 	}
 
-	return findWordBoundaryBytes(content, targetChars)
+	return findWordBoundary(content, targetChars)
 }
 
-// findHTMLBoundaryBytes finds a good HTML truncation point near targetChars for bytes.
-func findHTMLBoundaryBytes(content []byte, targetChars int) int {
+// findHTMLBoundary finds a good HTML truncation point near targetChars for bytes.
+func findHTMLBoundary(content []byte, targetChars int) int {
 	window := targetChars / htmlBoundaryWindowDivisor
 	searchStart := max(0, targetChars-window)
 	searchEnd := min(len(content), targetChars+window)
@@ -155,11 +108,11 @@ func findHTMLBoundaryBytes(content []byte, targetChars int) int {
 		return pos + 1
 	}
 
-	return findWordBoundaryBytes(content, targetChars)
+	return findWordBoundary(content, targetChars)
 }
 
-// findWordBoundaryBytes finds a word boundary near targetChars for bytes.
-func findWordBoundaryBytes(content []byte, targetChars int) int {
+// findWordBoundary finds a word boundary near targetChars for bytes.
+func findWordBoundary(content []byte, targetChars int) int {
 	window := targetChars / wordBoundaryWindowDivisor
 	searchStart := max(0, targetChars-window)
 

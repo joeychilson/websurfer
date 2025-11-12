@@ -15,13 +15,11 @@ import (
 	urlpkg "github.com/joeychilson/websurfer/url"
 )
 
-const defaultChunkSize = 50000
-
 // FetchRequest represents a request to fetch and process a URL.
 type FetchRequest struct {
-	URL       string                `json:"url"`
-	MaxTokens int                   `json:"max_tokens,omitempty"`
-	Range     *content.RangeOptions `json:"range,omitempty"`
+	URL       string `json:"url"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
+	Offset    int    `json:"offset,omitempty"`
 }
 
 // Metadata contains metadata about the fetched content.
@@ -40,10 +38,19 @@ type Metadata struct {
 
 // FetchResponse represents the response from a fetch request.
 type FetchResponse struct {
-	Metadata   Metadata            `json:"metadata"`
-	Content    string              `json:"content,omitempty"`
-	Outline    *outline.Outline    `json:"outline,omitempty"`
-	Navigation *content.Navigation `json:"navigation,omitempty"`
+	Metadata   Metadata         `json:"metadata"`
+	Content    string           `json:"content,omitempty"`
+	Outline    *outline.Outline `json:"outline,omitempty"`
+	Pagination *Pagination      `json:"pagination,omitempty"`
+}
+
+// Pagination contains pagination information for the response.
+type Pagination struct {
+	Offset              int  `json:"offset"`
+	Limit               int  `json:"limit"`
+	TotalTokens         int  `json:"total_tokens"`
+	HasMore             bool `json:"has_more"`
+	SuggestedNextOffset int  `json:"suggested_next_offset,omitempty"`
 }
 
 // ErrorResponse represents an error.
@@ -86,15 +93,6 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 	s.sendJSON(w, resp, http.StatusOK)
 }
 
-// handleHealth handles GET /health requests.
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	health := map[string]string{
-		"status": "ok",
-		"time":   time.Now().UTC().Format(time.RFC3339),
-	}
-	s.sendJSON(w, health, http.StatusOK)
-}
-
 // processFetch handles the fetch request processing logic.
 func (s *Server) processFetch(ctx context.Context, req *FetchRequest) (*FetchResponse, error) {
 	fetched, err := s.client.Fetch(ctx, req.URL)
@@ -104,85 +102,153 @@ func (s *Server) processFetch(ctx context.Context, req *FetchRequest) (*FetchRes
 
 	contentType := firstHeader(fetched.Headers, "Content-Type")
 	lastModified := firstHeader(fetched.Headers, "Last-Modified")
-	language := extractLanguageIfHTML(contentType, fetched.Body)
+
+	var language string
+	if strings.Contains(strings.ToLower(contentType), "html") {
+		language = extractLanguage(string(fetched.Body))
+	}
 
 	workingBytes := fetched.Body
-	if req.Range != nil {
-		workingBytes, err = content.ExtractRangeBytes(workingBytes, req.Range)
-		if err != nil {
-			return nil, fmt.Errorf("range extraction failed: %w", err)
-		}
+
+	if req.MaxTokens > 0 || req.Offset > 0 {
+		return s.buildPaginatedResponse(fetched, workingBytes, contentType, language, lastModified, req)
 	}
 
-	if req.MaxTokens > 0 {
-		return s.buildTruncatedResponse(fetched, workingBytes, contentType, language, lastModified, req)
-	}
-
-	return s.buildFullResponse(fetched, workingBytes, contentType, language, lastModified, req)
+	return s.buildFullResponse(fetched, workingBytes, contentType, language, lastModified)
 }
 
-// extractLanguageIfHTML extracts language from HTML content if applicable.
-func extractLanguageIfHTML(contentType string, body []byte) string {
-	if strings.Contains(strings.ToLower(contentType), "html") {
-		return extractLanguage(string(body))
-	}
-	return ""
-}
+// buildPaginatedResponse builds a response with pagination for offset/max_tokens requests.
+func (s *Server) buildPaginatedResponse(fetched *client.Response, workingBytes []byte, contentType, language, lastModified string, req *FetchRequest) (*FetchResponse, error) {
+	totalTokens := content.EstimateTokens(workingBytes, contentType)
 
-// buildTruncatedResponse builds a response with truncated content for max_tokens requests.
-func (s *Server) buildTruncatedResponse(fetched *client.Response, workingBytes []byte, contentType, language, lastModified string, req *FetchRequest) (*FetchResponse, error) {
-	truncation := content.TruncateBytes(workingBytes, contentType, req.MaxTokens)
+	maxTokens := req.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 4000
+	}
+
+	charsPerToken := float64(len(workingBytes)) / float64(totalTokens)
+	charOffset := int(float64(req.Offset) * charsPerToken)
+
+	if charOffset >= len(workingBytes) {
+		return nil, fmt.Errorf("offset %d exceeds content length (total tokens: %d)", req.Offset, totalTokens)
+	}
+
+	contentFromOffset := workingBytes[charOffset:]
+
+	truncation := content.Truncate(contentFromOffset, contentType, maxTokens)
+
 	metadata := buildFetchMetadata(fetched, contentType, language, lastModified, truncation.ReturnedTokens)
 
-	start, end := calculateTruncationRange(req.Range, truncation.ReturnedChars)
+	currentEndOffset := req.Offset + truncation.ReturnedTokens
+	hasMore := currentEndOffset < totalTokens
+
+	pagination := &Pagination{
+		Offset:      req.Offset,
+		Limit:       maxTokens,
+		TotalTokens: totalTokens,
+		HasMore:     hasMore,
+	}
+
+	if hasMore {
+		pagination.SuggestedNextOffset = currentEndOffset
+	}
+
+	var documentOutline *outline.Outline
+	if req.Offset == 0 && strings.Contains(contentType, "markdown") {
+		documentOutline = outline.ExtractBytes(workingBytes, contentType)
+	}
 
 	return &FetchResponse{
 		Metadata:   metadata,
 		Content:    truncation.Content,
-		Navigation: buildNavigationForContent(start, end, len(fetched.Body), req.MaxTokens),
+		Outline:    documentOutline,
+		Pagination: pagination,
 	}, nil
 }
 
-// buildFullResponse builds a response with full content.
-func (s *Server) buildFullResponse(fetched *client.Response, workingBytes []byte, contentType, language, lastModified string, req *FetchRequest) (*FetchResponse, error) {
-	estimatedTokens := content.EstimateTokensBytes(workingBytes, contentType)
+// buildFullResponse builds a response with full content (no pagination).
+func (s *Server) buildFullResponse(fetched *client.Response, workingBytes []byte, contentType, language, lastModified string) (*FetchResponse, error) {
+	estimatedTokens := content.EstimateTokens(workingBytes, contentType)
 	metadata := buildFetchMetadata(fetched, contentType, language, lastModified, estimatedTokens)
-	documentOutline := outline.ExtractBytes(workingBytes, "text/markdown")
 
-	start, end := calculateFullRange(req.Range, len(workingBytes))
+	var documentOutline *outline.Outline
+	if strings.Contains(contentType, "markdown") {
+		documentOutline = outline.ExtractBytes(workingBytes, contentType)
+	}
 
 	return &FetchResponse{
-		Metadata:   metadata,
-		Content:    string(workingBytes),
-		Outline:    documentOutline,
-		Navigation: buildNavigationForContent(start, end, len(workingBytes), 0),
+		Metadata: metadata,
+		Content:  string(workingBytes),
+		Outline:  documentOutline,
 	}, nil
 }
 
-// calculateTruncationRange calculates the start and end positions for truncated content.
-func calculateTruncationRange(rangeOpt *content.RangeOptions, returnedChars int) (start, end int) {
-	start = 0
-	if rangeOpt != nil {
-		start = rangeOpt.Start
+// validateRequest validates the fetch request.
+func (s *Server) validateRequest(req *FetchRequest) error {
+	if req == nil {
+		return fmt.Errorf("request cannot be nil")
 	}
-	end = returnedChars
-	if rangeOpt != nil {
-		end = rangeOpt.Start + returnedChars
+
+	if _, err := urlpkg.ValidateExternal(req.URL); err != nil {
+		return err
 	}
-	return start, end
+
+	if req.MaxTokens < 0 {
+		return fmt.Errorf("max_tokens must be non-negative")
+	}
+
+	if req.Offset < 0 {
+		return fmt.Errorf("offset must be non-negative")
+	}
+
+	return nil
 }
 
-// calculateFullRange calculates the start and end positions for full content.
-func calculateFullRange(rangeOpt *content.RangeOptions, totalLength int) (start, end int) {
-	start = 0
-	end = totalLength
-	if rangeOpt != nil {
-		start = rangeOpt.Start
-		end = rangeOpt.End
+// handleHealth handles GET /health requests.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	health := map[string]string{
+		"status": "ok",
+		"time":   time.Now().UTC().Format(time.RFC3339),
 	}
-	return start, end
+	s.sendJSON(w, health, http.StatusOK)
 }
 
+// sendJSON sends a JSON response.
+func (s *Server) sendJSON(w http.ResponseWriter, data interface{}, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(data); err != nil {
+		s.logger.Error("failed to encode response", "error", err)
+	}
+}
+
+// sendError sends an error response.
+func (s *Server) sendError(w http.ResponseWriter, message string, statusCode int) {
+	errResp := ErrorResponse{
+		Error:      message,
+		StatusCode: statusCode,
+	}
+	s.sendJSON(w, errResp, statusCode)
+}
+
+// extractLanguage extracts the language from the HTML content.
+func extractLanguage(htmlContent string) string {
+	langRegex := regexp.MustCompile(`(?i)<html[^>]+lang=["']([^"']+)["']`)
+	matches := langRegex.FindStringSubmatch(htmlContent)
+	if len(matches) > 1 {
+		langCode := strings.TrimSpace(matches[1])
+		if idx := strings.Index(langCode, "-"); idx != -1 {
+			langCode = langCode[:idx]
+		}
+		return strings.ToLower(langCode)
+	}
+	return ""
+}
+
+// buildFetchMetadata builds the fetch metadata.
 func buildFetchMetadata(resp *client.Response, contentType, language, lastModified string, tokens int) Metadata {
 	metadata := Metadata{
 		URL:             resp.URL,
@@ -203,161 +269,10 @@ func buildFetchMetadata(resp *client.Response, contentType, language, lastModifi
 	return metadata
 }
 
-func buildNavigationForContent(start, end, totalLength, maxTokens int) *content.Navigation {
-	nav := &content.Navigation{
-		Current: &content.RangeOptions{
-			Type:  "chars",
-			Start: start,
-			End:   end,
-		},
-		Options: []content.NavigationOption{},
-	}
-
-	chunkSize := calculateChunkSize(start, end, maxTokens)
-
-	addPreviousNavigation(nav, start, chunkSize)
-	addNextNavigation(nav, end, totalLength, chunkSize)
-	addExpandNavigation(nav, start, end, totalLength, chunkSize)
-	addFullNavigation(nav, start, end, totalLength)
-
-	return nav
-}
-
-// calculateChunkSize determines the chunk size for navigation.
-func calculateChunkSize(start, end, maxTokens int) int {
-	chunkSize := end - start
-	if chunkSize == 0 && maxTokens == 0 {
-		chunkSize = defaultChunkSize
-	}
-	return chunkSize
-}
-
-// addPreviousNavigation adds a "previous" navigation option if applicable.
-func addPreviousNavigation(nav *content.Navigation, start, chunkSize int) {
-	if start > 0 {
-		prevStart := max(0, start-chunkSize)
-		nav.Options = append(nav.Options, content.NavigationOption{
-			ID: "previous",
-			Range: &content.RangeOptions{
-				Type:  "chars",
-				Start: prevStart,
-				End:   start,
-			},
-			Description: "Get previous chunk of content",
-		})
-	}
-}
-
-// addNextNavigation adds a "next" navigation option if applicable.
-func addNextNavigation(nav *content.Navigation, end, totalLength, chunkSize int) {
-	if end < totalLength {
-		nextEnd := min(totalLength, end+chunkSize)
-		nav.Options = append(nav.Options, content.NavigationOption{
-			ID: "next",
-			Range: &content.RangeOptions{
-				Type:  "chars",
-				Start: end,
-				End:   nextEnd,
-			},
-			Description: "Get next chunk of content",
-		})
-	}
-}
-
-// addExpandNavigation adds an "expand_forward" navigation option if applicable.
-func addExpandNavigation(nav *content.Navigation, start, end, totalLength, chunkSize int) {
-	if end < totalLength {
-		expandEnd := min(totalLength, end+chunkSize)
-		nav.Options = append(nav.Options, content.NavigationOption{
-			ID: "expand_forward",
-			Range: &content.RangeOptions{
-				Type:  "chars",
-				Start: start,
-				End:   expandEnd,
-			},
-			Description: "Expand current view to include more content",
-		})
-	}
-}
-
-// addFullNavigation adds a "full" navigation option if the view is partial.
-func addFullNavigation(nav *content.Navigation, start, end, totalLength int) {
-	if start > 0 || end < totalLength {
-		nav.Options = append(nav.Options, content.NavigationOption{
-			ID: "full",
-			Range: &content.RangeOptions{
-				Type:  "chars",
-				Start: 0,
-				End:   totalLength,
-			},
-			Description: "Get entire document",
-		})
-	}
-}
-
+// firstHeader returns the first value for a given header key.
 func firstHeader(headers map[string][]string, key string) string {
 	if values, ok := headers[key]; ok && len(values) > 0 {
 		return values[0]
-	}
-	return ""
-}
-
-func (s *Server) validateRequest(req *FetchRequest) error {
-	if req == nil {
-		return fmt.Errorf("request cannot be nil")
-	}
-
-	if _, err := urlpkg.ValidateExternal(req.URL); err != nil {
-		return err
-	}
-
-	if req.MaxTokens < 0 {
-		return fmt.Errorf("max_tokens must be non-negative")
-	}
-
-	if req.Range != nil {
-		if req.Range.Type != "lines" && req.Range.Type != "chars" {
-			return fmt.Errorf("range type must be 'lines' or 'chars'")
-		}
-		if req.Range.Start < 0 || req.Range.End < 0 {
-			return fmt.Errorf("range start and end must be non-negative")
-		}
-		if req.Range.Start >= req.Range.End {
-			return fmt.Errorf("range start must be less than end")
-		}
-	}
-
-	return nil
-}
-
-func (s *Server) sendJSON(w http.ResponseWriter, data interface{}, statusCode int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
-	encoder := json.NewEncoder(w)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(data); err != nil {
-		s.logger.Error("failed to encode response", "error", err)
-	}
-}
-
-func (s *Server) sendError(w http.ResponseWriter, message string, statusCode int) {
-	errResp := ErrorResponse{
-		Error:      message,
-		StatusCode: statusCode,
-	}
-	s.sendJSON(w, errResp, statusCode)
-}
-
-func extractLanguage(htmlContent string) string {
-	langRegex := regexp.MustCompile(`(?i)<html[^>]+lang=["']([^"']+)["']`)
-	matches := langRegex.FindStringSubmatch(htmlContent)
-	if len(matches) > 1 {
-		langCode := strings.TrimSpace(matches[1])
-		if idx := strings.Index(langCode, "-"); idx != -1 {
-			langCode = langCode[:idx]
-		}
-		return strings.ToLower(langCode)
 	}
 	return ""
 }
