@@ -44,6 +44,8 @@ func ValidateExternal(rawURL string) (*url.URL, error) {
 }
 
 // ValidateNotPrivate checks if a host (hostname or hostname:port) resolves to a private or loopback IP address.
+// This includes blocking link-local addresses (169.254.0.0/16 and fe80::/10) to prevent SSRF attacks
+// against cloud metadata endpoints (AWS/GCP/Azure).
 func ValidateNotPrivate(host string) error {
 	hostname, _, err := net.SplitHostPort(host)
 	if err != nil {
@@ -55,6 +57,9 @@ func ValidateNotPrivate(host string) error {
 	if ip := net.ParseIP(hostname); ip != nil {
 		if ip.IsLoopback() || ip.IsPrivate() {
 			return fmt.Errorf("requests to private IP addresses are not allowed: %s", hostname)
+		}
+		if isLinkLocal(ip) {
+			return fmt.Errorf("requests to link-local addresses are not allowed: %s", hostname)
 		}
 		return nil
 	}
@@ -68,9 +73,23 @@ func ValidateNotPrivate(host string) error {
 		if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() {
 			return fmt.Errorf("url resolves to private IP address: %s -> %s", hostname, resolvedIP.String())
 		}
+		if isLinkLocal(resolvedIP) {
+			return fmt.Errorf("url resolves to link-local address: %s -> %s", hostname, resolvedIP.String())
+		}
 	}
 
 	return nil
+}
+
+// isLinkLocal checks if an IP address is in the link-local range.
+// This blocks:
+// - 169.254.0.0/16 (IPv4 link-local, used by AWS/GCP/Azure metadata endpoints)
+// - fe80::/10 (IPv6 link-local)
+func isLinkLocal(ip net.IP) bool {
+	if ip4 := ip.To4(); ip4 != nil {
+		return ip4[0] == 169 && ip4[1] == 254
+	}
+	return len(ip) == 16 && ip[0] == 0xfe && (ip[1]&0xc0) == 0x80
 }
 
 // ExtractHost extracts the host (hostname:port or just hostname) from a URL string.

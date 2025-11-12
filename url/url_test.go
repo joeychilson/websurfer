@@ -1,6 +1,7 @@
 package url
 
 import (
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -148,24 +149,31 @@ func TestValidateNotPrivateHostname(t *testing.T) {
 	_ = ValidateNotPrivate("example.com")
 }
 
-// TestValidateNotPrivateIPv6 verifies IPv6 support.
+// TestValidateNotPrivateIPv6 verifies IPv6 support including link-local blocking.
 func TestValidateNotPrivateIPv6(t *testing.T) {
 	tests := []struct {
 		name        string
 		host        string
 		shouldError bool
+		errorText   string
 	}{
-		{"loopback_v6", "::1", true},
-		{"loopback_v6_bracketed", "[::1]", true},
-		{"public_v6", "2001:4860:4860::8888", false}, // Google DNS
-		{"public_v6_bracketed", "[2001:4860:4860::8888]", false},
+		{"loopback_v6", "::1", true, "private"},
+		{"loopback_v6_bracketed", "[::1]", true, "private"},
+		{"link_local_v6", "fe80::1", true, "link-local"},
+		{"link_local_v6_bracketed", "[fe80::1]", true, "link-local"},
+		{"link_local_v6_full", "fe80:0000:0000:0000:0000:0000:0000:0001", true, "link-local"},
+		{"public_v6", "2001:4860:4860::8888", false, ""}, // Google DNS
+		{"public_v6_bracketed", "[2001:4860:4860::8888]", false, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateNotPrivate(tt.host)
 			if tt.shouldError {
-				assert.Error(t, err, "should reject private/loopback IPv6")
+				assert.Error(t, err, "should reject private/loopback/link-local IPv6")
+				if tt.errorText != "" {
+					assert.Contains(t, err.Error(), tt.errorText)
+				}
 			} else {
 				assert.NoError(t, err, "should accept public IPv6")
 			}
@@ -217,29 +225,25 @@ func TestExtractHostInvalid(t *testing.T) {
 	}
 }
 
-// TestSSRFProtectionAWSMetadata verifies behavior with AWS metadata service.
+// TestSSRFProtectionAWSMetadata verifies link-local addresses are blocked (AWS/GCP/Azure metadata).
+// CRITICAL: Blocks 169.254.0.0/16 to prevent SSRF attacks against cloud metadata endpoints.
 func TestSSRFProtectionAWSMetadata(t *testing.T) {
-	// AWS metadata service (169.254.169.254)
-	// Note: Go's net.IP.IsPrivate() does NOT consider link-local addresses (169.254.x.x) as private
-	// This is a known limitation. The current implementation would allow these addresses.
-	// If you want to block link-local addresses, the url package needs to be enhanced.
-	urls := []string{
-		"http://169.254.169.254/latest/meta-data/",
-		"http://169.254.169.254/",
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"aws_metadata_endpoint", "http://169.254.169.254/latest/meta-data/"},
+		{"aws_metadata_root", "http://169.254.169.254/"},
+		{"link_local_start", "http://169.254.0.1/"},
+		{"link_local_end", "http://169.254.255.254/"},
+		{"gcp_metadata_path", "http://169.254.169.254/computeMetadata/v1/"},
 	}
 
-	for _, url := range urls {
-		t.Run(url, func(t *testing.T) {
-			// Currently these are NOT blocked (link-local is not considered private by Go)
-			// This documents the current behavior
-			_, err := ValidateExternal(url)
-			// We document that this is currently allowed (not blocked)
-			// To fix this, url.ValidateNotPrivate would need to add explicit link-local checking
-			if err != nil {
-				t.Logf("Link-local address was blocked: %v", err)
-			} else {
-				t.Logf("Warning: Link-local address (AWS metadata) is currently NOT blocked by IsPrivate()")
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ValidateExternal(tt.url)
+			assert.Error(t, err, "link-local address should be blocked to prevent metadata SSRF")
+			assert.Contains(t, err.Error(), "link-local", "error should mention link-local address")
 		})
 	}
 }
@@ -296,6 +300,52 @@ func TestValidateNotPrivateDNSFailure(t *testing.T) {
 	// (we allow DNS failures to avoid blocking legitimate but temporarily unreachable sites)
 	err := ValidateNotPrivate("this-domain-definitely-does-not-exist-12345.com")
 	assert.NoError(t, err, "DNS failures should be allowed")
+}
+
+// TestIsLinkLocal verifies the link-local detection helper function.
+func TestIsLinkLocal(t *testing.T) {
+	tests := []struct {
+		name       string
+		ip         string
+		isLinkLocal bool
+	}{
+		// IPv4 link-local (169.254.0.0/16)
+		{"aws_metadata", "169.254.169.254", true},
+		{"link_local_start", "169.254.0.0", true},
+		{"link_local_end", "169.254.255.255", true},
+		{"link_local_random", "169.254.123.45", true},
+
+		// Not link-local
+		{"just_before_169_254", "169.253.255.255", false},
+		{"just_after_169_254", "169.255.0.0", false},
+		{"private_192", "192.168.1.1", false},
+		{"private_10", "10.0.0.1", false},
+		{"loopback", "127.0.0.1", false},
+		{"public", "8.8.8.8", false},
+
+		// IPv6 link-local (fe80::/10)
+		{"ipv6_link_local_short", "fe80::1", true},
+		{"ipv6_link_local_full", "fe80:0000:0000:0000:0000:0000:0000:0001", true},
+		{"ipv6_link_local_upper", "FE80::1", true},
+
+		// Not IPv6 link-local
+		{"ipv6_loopback", "::1", false},
+		{"ipv6_public", "2001:4860:4860::8888", false},
+		{"ipv6_just_before_fe80", "fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false},
+		{"ipv6_febf_end_of_range", "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true},
+		{"ipv6_fec0_not_link_local", "fec0::1", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ip := net.ParseIP(tt.ip)
+			require.NotNil(t, ip, "test IP should be valid")
+
+			result := isLinkLocal(ip)
+			assert.Equal(t, tt.isLinkLocal, result,
+				"isLinkLocal(%s) should be %v", tt.ip, tt.isLinkLocal)
+		})
+	}
 }
 
 // TestParseAndValidatePreservesURL verifies URL parsing preserves all components.
