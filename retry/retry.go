@@ -95,7 +95,9 @@ func (r *Retrier) calculateBackoff(attempt int) time.Duration {
 	maxDelay := r.config.GetMaxDelay()
 	multiplier := r.config.GetMultiplier()
 
-	delay := float64(initialDelay) * math.Pow(multiplier, float64(attempt))
+	cappedAttempt := min(attempt, 63)
+
+	delay := float64(initialDelay) * math.Pow(multiplier, float64(cappedAttempt))
 
 	if delay > float64(maxDelay) {
 		delay = float64(maxDelay)

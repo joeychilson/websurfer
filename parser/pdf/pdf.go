@@ -6,6 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
+)
+
+const (
+	// defaultPDFTimeout is the maximum time allowed for PDF conversion.
+	// This prevents malformed PDFs from hanging indefinitely.
+	defaultPDFTimeout = 30 * time.Second
 )
 
 // Parser converts PDF content to plain text using pdftotext.
@@ -43,7 +50,10 @@ func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "pdftotext", "-layout", "-nopgbrk", tmpName, "-")
+	parseCtx, cancel := context.WithTimeout(ctx, defaultPDFTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(parseCtx, "pdftotext", "-layout", "-nopgbrk", tmpName, "-")
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

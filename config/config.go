@@ -528,31 +528,24 @@ func matchCompiledPattern(urlStr string, cp compiledPattern) bool {
 // matchWildcardHost matches a host against a wildcard pattern.
 // Supports: *example*, example*, *example
 func matchWildcardHost(host, pattern string) bool {
-	if strings.HasPrefix(pattern, "*") && strings.HasSuffix(pattern, "*") {
-		substring := strings.Trim(pattern, "*")
-		return strings.Contains(host, substring)
+	switch {
+	case strings.HasPrefix(pattern, "*") && strings.HasSuffix(pattern, "*"):
+		return strings.Contains(host, strings.Trim(pattern, "*"))
+	case strings.HasPrefix(pattern, "*"):
+		return strings.HasSuffix(host, strings.TrimPrefix(pattern, "*"))
+	case strings.HasSuffix(pattern, "*"):
+		return strings.HasPrefix(host, strings.TrimSuffix(pattern, "*"))
+	default:
+		return false
 	}
-
-	if after, ok := strings.CutPrefix(pattern, "*"); ok {
-		return strings.HasSuffix(host, after)
-	}
-
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(host, prefix)
-	}
-
-	return false
 }
 
 // matchPathPattern matches a path against a pattern.
 // Supports: /path/*, /exact/path
 func matchPathPattern(path, pattern string) bool {
 	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(path, prefix)
+		return strings.HasPrefix(path, strings.TrimSuffix(pattern, "*"))
 	}
-
 	return path == pattern
 }
 

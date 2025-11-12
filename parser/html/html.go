@@ -136,13 +136,23 @@ func optimizeHTML(n *html.Node) {
 		if normalized != " " {
 			trimmed := strings.TrimSpace(normalized)
 			if trimmed != "" {
-				if data != "" && unicode.IsSpace(rune(data[0])) {
-					trimmed = " " + trimmed
+				preserveLeading := data != "" && unicode.IsSpace(rune(data[0]))
+				preserveTrailing := data != "" && unicode.IsSpace(rune(data[len(data)-1]))
+
+				if preserveLeading || preserveTrailing {
+					var b strings.Builder
+					b.Grow(len(trimmed) + 2)
+					if preserveLeading {
+						b.WriteByte(' ')
+					}
+					b.WriteString(trimmed)
+					if preserveTrailing {
+						b.WriteByte(' ')
+					}
+					normalized = b.String()
+				} else {
+					normalized = trimmed
 				}
-				if data != "" && unicode.IsSpace(rune(data[len(data)-1])) {
-					trimmed = trimmed + " "
-				}
-				normalized = trimmed
 			}
 		}
 		n.Data = normalized
@@ -183,8 +193,10 @@ func isEmptyNode(n *html.Node) bool {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		switch c.Type {
 		case html.TextNode:
-			if strings.TrimSpace(c.Data) != "" {
-				return false
+			for _, r := range c.Data {
+				if !unicode.IsSpace(r) {
+					return false
+				}
 			}
 		case html.ElementNode:
 			if !isEmptyNode(c) {
