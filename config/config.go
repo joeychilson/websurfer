@@ -83,16 +83,6 @@ type CacheConfig struct {
 	StaleTime time.Duration `yaml:"stale_time,omitempty"`
 }
 
-// IsEnabled returns true if caching is enabled
-func (c *CacheConfig) IsEnabled() bool {
-	return c.TTL > 0
-}
-
-// IsStaleWhileRevalidateEnabled returns true if stale while revalidate is enabled
-func (c *CacheConfig) IsStaleWhileRevalidateEnabled() bool {
-	return c.StaleTime > 0
-}
-
 // FetchConfig defines how to fetch webpages, including HTTP client settings.
 type FetchConfig struct {
 	Timeout              time.Duration     `yaml:"timeout,omitempty"`
@@ -127,20 +117,12 @@ func (f *FetchConfig) GetRobotsTxtCacheTTL() time.Duration {
 	return 24 * time.Hour
 }
 
-// ShouldFollowRedirects returns whether to follow redirects (default: true)
-func (f *FetchConfig) ShouldFollowRedirects() bool {
-	if f.MaxRedirects > 0 {
-		return true
-	}
-	return f.FollowRedirects
-}
-
 // GetMaxRedirects returns the max number of redirects with a default of 10
 func (f *FetchConfig) GetMaxRedirects() int {
 	if f.MaxRedirects > 0 {
 		return f.MaxRedirects
 	}
-	if !f.ShouldFollowRedirects() {
+	if !f.FollowRedirects {
 		return 0
 	}
 	return 10
@@ -202,11 +184,6 @@ type RetryConfig struct {
 	MaxDelay     time.Duration `yaml:"max_delay,omitempty"`
 	Multiplier   float64       `yaml:"multiplier,omitempty"`
 	RetryOn      []int         `yaml:"retry_on,omitempty"`
-}
-
-// IsEnabled returns true if retries are configured
-func (r *RetryConfig) IsEnabled() bool {
-	return r.MaxRetries > 0
 }
 
 // GetMaxRetries returns the max retries with a default of 0 (no retries)
@@ -448,29 +425,11 @@ func matchHostAndPath(host, path, pattern string) bool {
 	hostPattern := parts[0]
 	pathPattern := "/" + parts[1]
 
-	if !matchHostPattern(host, hostPattern) {
+	if !matchWildcardHost(host, hostPattern) && host != hostPattern {
 		return false
 	}
 
 	return matchPathPattern(path, pathPattern)
-}
-
-func matchHostPattern(host, pattern string) bool {
-	if strings.HasPrefix(pattern, "*") && strings.HasSuffix(pattern, "*") {
-		substring := strings.Trim(pattern, "*")
-		return strings.Contains(host, substring)
-	}
-
-	if after, ok := strings.CutPrefix(pattern, "*"); ok {
-		return strings.HasSuffix(host, after)
-	}
-
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(host, prefix)
-	}
-
-	return host == pattern
 }
 
 func matchPathPattern(path, pattern string) bool {

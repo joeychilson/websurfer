@@ -130,35 +130,6 @@ func (c *Cache) Set(ctx context.Context, entry *Entry) error {
 	return nil
 }
 
-// Delete removes an entry from Redis.
-func (c *Cache) Delete(ctx context.Context, url string) error {
-	key := c.makeKey(url)
-
-	if err := c.client.Del(ctx, key).Err(); err != nil {
-		return fmt.Errorf("redis delete failed: %w", err)
-	}
-
-	return nil
-}
-
-// Clear removes all entries with the configured prefix.
-func (c *Cache) Clear(ctx context.Context) error {
-	pattern := c.prefix + "*"
-
-	iter := c.client.Scan(ctx, 0, pattern, 0).Iterator()
-	for iter.Next(ctx) {
-		if err := c.client.Del(ctx, iter.Val()).Err(); err != nil {
-			return fmt.Errorf("redis clear failed: %w", err)
-		}
-	}
-
-	if err := iter.Err(); err != nil {
-		return fmt.Errorf("redis scan failed: %w", err)
-	}
-
-	return nil
-}
-
 // makeKey creates a Redis key with the configured prefix.
 func (c *Cache) makeKey(url string) string {
 	return c.prefix + url

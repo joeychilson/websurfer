@@ -155,20 +155,6 @@ func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	return buildResponse(entry, "miss"), nil
 }
 
-// FetchNoCache retrieves content from the given URL without using cache.
-func (c *Client) FetchNoCache(ctx context.Context, urlStr string) (*Response, error) {
-	c.logger.Debug("fetch started (no cache)", "url", urlStr)
-
-	entry, err := c.coordinator.Fetch(ctx, urlStr, "")
-	if err != nil {
-		c.logger.Error("fetch failed", "url", urlStr, "error", err)
-		return nil, err
-	}
-
-	c.logger.Info("fetch completed (no cache)", "url", urlStr, "status_code", entry.StatusCode, "body_size", len(entry.Body))
-	return buildResponse(entry, "miss"), nil
-}
-
 // buildResponse creates a Response from a cache Entry.
 func buildResponse(entry *cache.Entry, cacheState string) *Response {
 	cachedAt := entry.StoredAt
