@@ -67,7 +67,7 @@ func New(cfg *config.Config) (*Client, error) {
 	parserRegistry.Register([]string{"application/pdf"}, pdfParser)
 
 	coordinator := NewFetchCoordinator(cfg, robotsChecker, limiter, parserRegistry, logger)
-	cacheManager := NewCacheManager(nil, logger, coordinator.Fetch)
+	cacheManager := NewCacheManager(nil, logger, coordinator)
 
 	return &Client{
 		coordinator:  coordinator,

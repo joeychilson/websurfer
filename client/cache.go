@@ -21,14 +21,11 @@ type CacheManager struct {
 	refreshing     sync.Map
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
-	fetchFunc      FetchFunc
+	coordinator    *FetchCoordinator
 }
 
-// FetchFunc is a function that fetches content with optional conditional request.
-type FetchFunc func(ctx context.Context, urlStr string, ifModifiedSince string) (*cache.Entry, error)
-
 // NewCacheManager creates a new cache manager.
-func NewCacheManager(cache *cache.Cache, logger *slog.Logger, fetchFunc FetchFunc) *CacheManager {
+func NewCacheManager(cache *cache.Cache, logger *slog.Logger, coordinator *FetchCoordinator) *CacheManager {
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 
 	return &CacheManager{
@@ -36,7 +33,7 @@ func NewCacheManager(cache *cache.Cache, logger *slog.Logger, fetchFunc FetchFun
 		logger:         logger,
 		shutdownCtx:    shutdownCtx,
 		shutdownCancel: shutdownCancel,
-		fetchFunc:      fetchFunc,
+		coordinator:    coordinator,
 	}
 }
 
@@ -100,7 +97,7 @@ func (m *CacheManager) refreshInBackground(urlStr string, entry *cache.Entry) {
 	refreshCtx, cancel := context.WithTimeout(m.shutdownCtx, backgroundRefreshTimeout)
 	defer cancel()
 
-	newEntry, err := m.fetchFunc(refreshCtx, urlStr, entry.LastModified)
+	newEntry, err := m.coordinator.Fetch(refreshCtx, urlStr, entry.LastModified)
 	if err != nil {
 		if m.shutdownCtx.Err() != nil {
 			m.logger.Debug("background refresh cancelled due to shutdown", "url", urlStr)
