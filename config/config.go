@@ -16,10 +16,38 @@ const (
 	DefaultUserAgent = "websurfer/1.0 (webpage retriever; +https://github.com/joeychilson/websurfer)"
 )
 
+// patternType indicates the type of pattern matching to use.
+type patternType int
+
+const (
+	patternExact              patternType = iota
+	patternWildcardDomain                 // *.example.com
+	patternWildcardDomainPath             // *.example.com/path
+	patternWildcardHost                   // *example* or example* or *example
+	patternHostPath                       // example.com/path/* or host/path
+)
+
+// compiledPattern holds pre-parsed pattern data for fast matching.
+type compiledPattern struct {
+	patternType patternType
+	original    string
+	domain      string // For domain patterns
+	host        string // For host patterns
+	path        string // For path patterns
+}
+
+// compiledSiteConfig holds a site config with pre-compiled pattern.
+type compiledSiteConfig struct {
+	pattern compiledPattern
+	config  SiteConfig
+}
+
 // Config represents the top-level configuration structure for the webpage retriever.
 type Config struct {
-	Default DefaultConfig `yaml:"default"`
-	Sites   []SiteConfig  `yaml:"sites"`
+	Default       DefaultConfig        `yaml:"default"`
+	Sites         []SiteConfig         `yaml:"sites"`
+	compiledSites []compiledSiteConfig // Pre-compiled patterns for fast matching
+	compiledOnce  bool                 // Track if compilation has been done
 }
 
 // New returns a new Config with sensible defaults.
@@ -42,16 +70,21 @@ type ResolvedConfig struct {
 	Retry     RetryConfig
 }
 
-// GetConfigForURL returns the merged configuration for a given URL
+// GetConfigForURL returns the merged configuration for a given URL.
+// It uses pre-compiled patterns for efficient matching.
 func (c *Config) GetConfigForURL(url string) ResolvedConfig {
+	c.compilePatterns()
+
 	resolved := ResolvedConfig{
 		Cache:     c.Default.Cache,
 		Fetch:     c.Default.Fetch,
 		RateLimit: c.Default.RateLimit,
 		Retry:     c.Default.Retry,
 	}
-	for _, site := range c.Sites {
-		if matchPattern(url, site.Pattern) {
+
+	for _, compiled := range c.compiledSites {
+		if matchCompiledPattern(url, compiled.pattern) {
+			site := compiled.config
 			if site.Cache != nil {
 				resolved.Cache = mergeCache(resolved.Cache, *site.Cache)
 			}
@@ -67,6 +100,57 @@ func (c *Config) GetConfigForURL(url string) ResolvedConfig {
 		}
 	}
 	return resolved
+}
+
+// compilePatterns pre-compiles all site patterns for fast matching.
+func (c *Config) compilePatterns() {
+	if c.compiledOnce {
+		return
+	}
+	c.compiledOnce = true
+	c.compiledSites = make([]compiledSiteConfig, 0, len(c.Sites))
+
+	for _, site := range c.Sites {
+		compiled := compiledSiteConfig{
+			pattern: compilePattern(site.Pattern),
+			config:  site,
+		}
+		c.compiledSites = append(c.compiledSites, compiled)
+	}
+}
+
+// compilePattern pre-parses a pattern string into a compiledPattern.
+func compilePattern(pattern string) compiledPattern {
+	cp := compiledPattern{original: pattern}
+
+	if strings.HasPrefix(pattern, "*.") {
+		if idx := strings.Index(pattern, "/"); idx != -1 {
+			cp.patternType = patternWildcardDomainPath
+			cp.domain = pattern[2:idx]
+			cp.path = pattern[idx:]
+		} else {
+			cp.patternType = patternWildcardDomain
+			cp.domain = pattern[2:]
+		}
+		return cp
+	}
+
+	if idx := strings.Index(pattern, "/"); idx != -1 {
+		cp.patternType = patternHostPath
+		cp.host = pattern[:idx]
+		cp.path = pattern[idx:]
+		return cp
+	}
+
+	if strings.Contains(pattern, "*") {
+		cp.patternType = patternWildcardHost
+		cp.host = pattern
+		return cp
+	}
+
+	cp.patternType = patternExact
+	cp.host = pattern
+	return cp
 }
 
 // DefaultConfig contains default settings applied to all sites unless overridden.
@@ -363,58 +447,45 @@ func (c *Config) validateFetch(ctx string, f FetchConfig) error {
 	return nil
 }
 
-func matchPattern(urlStr, pattern string) bool {
+// matchCompiledPattern efficiently matches a URL against a pre-compiled pattern.
+func matchCompiledPattern(urlStr string, cp compiledPattern) bool {
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil || parsedURL.Host == "" {
-		return urlStr == pattern
+		return urlStr == cp.original
 	}
 
 	host := parsedURL.Host
 	path := parsedURL.Path
 
-	if strings.HasPrefix(pattern, "*.") {
-		if strings.Contains(pattern, "/") {
-			return matchWildcardDomainAndPath(host, path, pattern)
+	switch cp.patternType {
+	case patternExact:
+		return host == cp.host
+
+	case patternWildcardDomain:
+		return host == cp.domain || strings.HasSuffix(host, "."+cp.domain)
+
+	case patternWildcardDomainPath:
+		if host != cp.domain && !strings.HasSuffix(host, "."+cp.domain) {
+			return false
 		}
-		return matchWildcardDomain(host, pattern[2:])
-	}
+		return matchPathPattern(path, cp.path)
 
-	if strings.Contains(pattern, "/") {
-		return matchHostAndPath(host, path, pattern)
-	}
+	case patternHostPath:
+		if cp.host != host && !matchWildcardHost(host, cp.host) {
+			return false
+		}
+		return matchPathPattern(path, cp.path)
 
-	if strings.Contains(pattern, "*") {
-		return matchWildcardHost(host, pattern)
-	}
+	case patternWildcardHost:
+		return matchWildcardHost(host, cp.host)
 
-	return host == pattern
-}
-
-func matchWildcardDomain(host, domain string) bool {
-	return host == domain || strings.HasSuffix(host, "."+domain)
-}
-
-func matchWildcardDomainAndPath(host, path, pattern string) bool {
-	parts := strings.SplitN(pattern, "/", 2)
-	if len(parts) != 2 {
+	default:
 		return false
 	}
-
-	domainPattern := parts[0]
-	if len(domainPattern) < 2 {
-		return false
-	}
-
-	pathPattern := "/" + parts[1]
-
-	domain := domainPattern[2:]
-	if !matchWildcardDomain(host, domain) {
-		return false
-	}
-
-	return matchPathPattern(path, pathPattern)
 }
 
+// matchWildcardHost matches a host against a wildcard pattern.
+// Supports: *example*, example*, *example
 func matchWildcardHost(host, pattern string) bool {
 	if strings.HasPrefix(pattern, "*") && strings.HasSuffix(pattern, "*") {
 		substring := strings.Trim(pattern, "*")
@@ -433,18 +504,8 @@ func matchWildcardHost(host, pattern string) bool {
 	return false
 }
 
-func matchHostAndPath(host, path, pattern string) bool {
-	parts := strings.SplitN(pattern, "/", 2)
-	hostPattern := parts[0]
-	pathPattern := "/" + parts[1]
-
-	if !matchWildcardHost(host, hostPattern) && host != hostPattern {
-		return false
-	}
-
-	return matchPathPattern(path, pathPattern)
-}
-
+// matchPathPattern matches a path against a pattern.
+// Supports: /path/*, /exact/path
 func matchPathPattern(path, pattern string) bool {
 	if strings.HasSuffix(pattern, "*") {
 		prefix := strings.TrimSuffix(pattern, "*")

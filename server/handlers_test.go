@@ -62,7 +62,7 @@ func TestExtractLanguage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractLanguage(tt.html)
+			result := extractLanguage([]byte(tt.html))
 			if result != tt.expected {
 				t.Errorf("extractLanguage(%q) = %q, want %q", tt.html, result, tt.expected)
 			}
@@ -71,7 +71,7 @@ func TestExtractLanguage(t *testing.T) {
 }
 
 func BenchmarkExtractLanguage(b *testing.B) {
-	html := `<!DOCTYPE html>
+	html := []byte(`<!DOCTYPE html>
 <html lang="en-US" class="no-js">
 <head>
     <meta charset="UTF-8">
@@ -80,7 +80,7 @@ func BenchmarkExtractLanguage(b *testing.B) {
 <body>
     <h1>Hello World</h1>
 </body>
-</html>`
+</html>`)
 
 	for b.Loop() {
 		extractLanguage(html)

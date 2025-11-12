@@ -110,7 +110,7 @@ func (s *Server) processFetch(ctx context.Context, req *FetchRequest) (*FetchRes
 
 	var language string
 	if strings.Contains(strings.ToLower(contentType), "html") {
-		language = extractLanguage(string(fetched.Body))
+		language = extractLanguage(fetched.Body)
 	}
 
 	workingBytes := fetched.Body
@@ -240,10 +240,10 @@ func (s *Server) sendError(w http.ResponseWriter, message string, statusCode int
 }
 
 // extractLanguage extracts the language from the HTML content.
-func extractLanguage(htmlContent string) string {
-	matches := langRegex.FindStringSubmatch(htmlContent)
+func extractLanguage(htmlContent []byte) string {
+	matches := langRegex.FindSubmatch(htmlContent)
 	if len(matches) > 1 {
-		langCode := strings.TrimSpace(matches[1])
+		langCode := strings.TrimSpace(string(matches[1]))
 		if idx := strings.Index(langCode, "-"); idx != -1 {
 			langCode = langCode[:idx]
 		}

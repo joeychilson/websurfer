@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -137,7 +138,7 @@ func (f *FetchCoordinator) buildCacheEntry(ctx context.Context, urlStr string, f
 
 	var title, description string
 	if strings.Contains(strings.ToLower(contentType), "html") && len(fetcherResp.Body) > 0 {
-		title, description = extractMetadataFromHTML(string(fetcherResp.Body))
+		title, description = extractMetadataFromHTML(fetcherResp.Body)
 	}
 
 	body, err := f.parseContent(ctx, urlStr, contentType, fetcherResp.Body)
@@ -201,8 +202,8 @@ func getFirstHeader(headers map[string][]string, key string) string {
 }
 
 // extractMetadataFromHTML extracts title and description from HTML by parsing the DOM.
-func extractMetadataFromHTML(htmlContent string) (title, description string) {
-	doc, err := html.Parse(strings.NewReader(htmlContent))
+func extractMetadataFromHTML(htmlContent []byte) (title, description string) {
+	doc, err := html.Parse(bytes.NewReader(htmlContent))
 	if err != nil {
 		return "", ""
 	}
