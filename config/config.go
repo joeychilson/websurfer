@@ -95,6 +95,7 @@ type FetchConfig struct {
 	FollowRedirects      bool              `yaml:"follow_redirects,omitempty"`
 	MaxRedirects         int               `yaml:"max_redirects,omitempty"`
 	EnableSSRFProtection bool              `yaml:"enable_ssrf_protection,omitempty"`
+	MaxBodySize          int64             `yaml:"max_body_size,omitempty"`
 }
 
 // GetHeaders returns the headers to use for a request
@@ -126,6 +127,14 @@ func (f *FetchConfig) GetMaxRedirects() int {
 		return 0
 	}
 	return 10
+}
+
+// GetMaxBodySize returns the max body size with a default of 100MB (0 = unlimited)
+func (f *FetchConfig) GetMaxBodySize() int64 {
+	if f.MaxBodySize > 0 {
+		return f.MaxBodySize
+	}
+	return 100 * 1024 * 1024
 }
 
 // URLRewrite defines a URL transformation rule applied before fetching.
@@ -336,6 +345,10 @@ func (c *Config) validateFetch(ctx string, f FetchConfig) error {
 
 	if f.MaxRedirects < 0 {
 		return fmt.Errorf("%s.fetch: 'max_redirects' must be >= 0", ctx)
+	}
+
+	if f.MaxBodySize < 0 {
+		return fmt.Errorf("%s.fetch: 'max_body_size' must be >= 0", ctx)
 	}
 
 	for i, rewrite := range f.URLRewrites {
