@@ -3,6 +3,7 @@ package content
 import (
 	"bytes"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/joeychilson/websurfer/parser"
 )
@@ -20,7 +21,7 @@ type TruncateResult struct {
 	ReturnedTokens int    `json:"returned_tokens"`
 	TotalChars     int    `json:"total_chars"`
 	TotalTokens    int    `json:"total_tokens"`
-	NextOffset     int    `json:"next_offset"` // Character offset for next page (0 if not truncated)
+	NextOffset     int    `json:"next_offset"`
 }
 
 // TruncateBytes truncates content to fit within maxTokens using smart boundaries.
@@ -36,7 +37,7 @@ func Truncate(content []byte, contentType string, maxTokens int) *TruncateResult
 			ReturnedTokens: totalTokens,
 			TotalChars:     totalChars,
 			TotalTokens:    totalTokens,
-			NextOffset:     0, // No next page
+			NextOffset:     0,
 		}
 	}
 
@@ -54,13 +55,37 @@ func Truncate(content []byte, contentType string, maxTokens int) *TruncateResult
 		ReturnedTokens: returnedTokens,
 		TotalChars:     totalChars,
 		TotalTokens:    totalTokens,
-		NextOffset:     truncateAt, // Start next page at this character position
+		NextOffset:     truncateAt,
 	}
 }
 
 // isWhitespace checks if a character is whitespace.
 func isWhitespace(ch byte) bool {
 	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+}
+
+// adjustToUTF8Boundary moves a position backward to the nearest valid UTF-8 character boundary.
+// This prevents splitting multi-byte UTF-8 characters (emoji, CJK, etc.)
+func adjustToUTF8Boundary(content []byte, pos int) int {
+	if pos <= 0 || pos >= len(content) {
+		return pos
+	}
+
+	if utf8.RuneStart(content[pos]) {
+		return pos
+	}
+
+	for i := pos - 1; i >= 0 && i > pos-4; i-- {
+		if utf8.RuneStart(content[i]) {
+			_, size := utf8.DecodeRune(content[i:])
+			if i+size <= pos {
+				return pos
+			}
+			return i
+		}
+	}
+
+	return pos
 }
 
 // findTruncationPointBytes finds a smart boundary to truncate at for bytes.
@@ -70,12 +95,15 @@ func findTruncationPoint(content []byte, contentType string, targetChars int) in
 	}
 
 	ct := parser.NormalizeContentType(contentType)
+	var pos int
 	if strings.HasPrefix(ct, "text/html") ||
 		strings.HasPrefix(ct, "application/xhtml") {
-		return findHTMLBoundary(content, targetChars)
+		pos = findHTMLBoundary(content, targetChars)
+	} else {
+		pos = findWordBoundary(content, targetChars)
 	}
 
-	return findWordBoundary(content, targetChars)
+	return adjustToUTF8Boundary(content, pos)
 }
 
 // findHTMLBoundary finds a good HTML truncation point near targetChars for bytes.

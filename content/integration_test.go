@@ -63,9 +63,7 @@ func TestTruncatePaginationNoDataLoss(t *testing.T) {
 
 // TestTruncateUTF8BoundarySafety verifies truncation never splits UTF-8 characters.
 // This prevents corrupted text being sent to LLMs.
-// TODO: Current truncation may split multi-byte UTF-8 characters
 func TestTruncateUTF8BoundarySafety(t *testing.T) {
-	t.Skip("TODO: UTF-8 boundary safety needs implementation")
 	// Content with multi-byte UTF-8 characters
 	tests := []struct {
 		content string
@@ -179,10 +177,10 @@ func TestTruncateDeterministicAcrossRuns(t *testing.T) {
 func TestEstimateTokensVsActual(t *testing.T) {
 	t.Skip("TODO: Token estimation is approximate, these are future accuracy targets")
 	tests := []struct {
-		content         string
-		contentType     string
-		expectedRange   [2]int // [min, max] expected tokens
-		name            string
+		content       string
+		contentType   string
+		expectedRange [2]int // [min, max] expected tokens
+		name          string
 	}{
 		{
 			content:       "The quick brown fox",
