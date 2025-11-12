@@ -1,9 +1,12 @@
 package cache
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -83,17 +86,23 @@ type Cache struct {
 
 // Config holds cache configuration.
 type Config struct {
-	Prefix    string
-	TTL       time.Duration
-	StaleTime time.Duration
+	Prefix             string
+	TTL                time.Duration
+	StaleTime          time.Duration
+	EnableCompression  bool
+	CompressionLevel   int
+	CompressionMinSize int
 }
 
 // DefaultConfig returns a cache config with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		Prefix:    "websurfer:",
-		TTL:       5 * time.Minute,
-		StaleTime: 1 * time.Hour,
+		Prefix:             "websurfer:",
+		TTL:                5 * time.Minute,
+		StaleTime:          1 * time.Hour,
+		EnableCompression:  true,
+		CompressionLevel:   gzip.DefaultCompression,
+		CompressionMinSize: 1024,
 	}
 }
 
@@ -118,6 +127,13 @@ func (c *Cache) Get(ctx context.Context, url string) (*Entry, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("redis get failed: %w", err)
+	}
+
+	if c.config.EnableCompression && len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+		data, err = c.decompress(data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decompress entry: %w", err)
+		}
 	}
 
 	var entry Entry
@@ -149,6 +165,13 @@ func (c *Cache) Set(ctx context.Context, entry *Entry) error {
 		return fmt.Errorf("failed to marshal entry: %w", err)
 	}
 
+	if c.config.EnableCompression && len(data) >= c.config.CompressionMinSize {
+		data, err = c.compress(data)
+		if err != nil {
+			return fmt.Errorf("failed to compress entry: %w", err)
+		}
+	}
+
 	expiration := entry.TTL + entry.StaleTime
 
 	if err := c.client.Set(ctx, key, data, expiration).Err(); err != nil {
@@ -163,6 +186,42 @@ func (c *Cache) makeKey(url string) string {
 	return c.prefix + url
 }
 
+// compress compresses data using gzip.
+func (c *Cache) compress(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	level := c.config.CompressionLevel
+	if level == 0 {
+		level = gzip.DefaultCompression
+	}
+
+	gz, err := gzip.NewWriterLevel(&buf, level)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := gz.Write(data); err != nil {
+		gz.Close()
+		return nil, err
+	}
+
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// decompress decompresses gzipped data.
+func (c *Cache) decompress(data []byte) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	return io.ReadAll(gz)
+}
+
 // applyDefaults returns a new Config with default values applied for any zero-valued fields.
 func applyDefaults(config Config) Config {
 	defaults := DefaultConfig()
@@ -175,6 +234,14 @@ func applyDefaults(config Config) Config {
 	}
 	if config.StaleTime == 0 {
 		config.StaleTime = defaults.StaleTime
+	}
+	if config.EnableCompression {
+		if config.CompressionLevel == 0 {
+			config.CompressionLevel = defaults.CompressionLevel
+		}
+		if config.CompressionMinSize == 0 {
+			config.CompressionMinSize = defaults.CompressionMinSize
+		}
 	}
 	return config
 }
