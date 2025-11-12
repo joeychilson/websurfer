@@ -105,8 +105,16 @@ func (s *Server) processFetch(ctx context.Context, req *FetchRequest) (*FetchRes
 		return nil, err
 	}
 
-	contentType := firstHeader(fetched.Headers, "Content-Type")
-	lastModified := firstHeader(fetched.Headers, "Last-Modified")
+	var (
+		contentType  string
+		lastModified string
+	)
+	if values, ok := fetched.Headers["Content-Type"]; ok && len(values) > 0 {
+		contentType = values[0]
+	}
+	if values, ok := fetched.Headers["Last-Modified"]; ok && len(values) > 0 {
+		lastModified = values[0]
+	}
 
 	var language string
 	if strings.Contains(strings.ToLower(contentType), "html") {
@@ -271,12 +279,4 @@ func buildFetchMetadata(resp *client.Response, contentType, language, lastModifi
 	}
 
 	return metadata
-}
-
-// firstHeader returns the first value for a given header key.
-func firstHeader(headers map[string][]string, key string) string {
-	if values, ok := headers[key]; ok && len(values) > 0 {
-		return values[0]
-	}
-	return ""
 }

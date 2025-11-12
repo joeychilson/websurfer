@@ -133,8 +133,16 @@ func (f *FetchCoordinator) performFetch(ctx context.Context, urlStr string, reso
 
 // buildCacheEntry constructs a cache entry from the fetcher response.
 func (f *FetchCoordinator) buildCacheEntry(ctx context.Context, urlStr string, fetcherResp *fetcher.Response) (*cache.Entry, error) {
-	contentType := getFirstHeader(fetcherResp.Headers, "Content-Type")
-	lastModified := getFirstHeader(fetcherResp.Headers, "Last-Modified")
+	var (
+		contentType  string
+		lastModified string
+	)
+	if values, ok := fetcherResp.Headers["Content-Type"]; ok && len(values) > 0 {
+		contentType = values[0]
+	}
+	if values, ok := fetcherResp.Headers["Last-Modified"]; ok && len(values) > 0 {
+		lastModified = values[0]
+	}
 
 	var title, description string
 	if strings.Contains(strings.ToLower(contentType), "html") && len(fetcherResp.Body) > 0 {
@@ -192,14 +200,6 @@ func (f *FetchCoordinator) applyCrawlDelay(resolved config.ResolvedConfig, crawl
 	}
 
 	return resolved
-}
-
-// getFirstHeader returns the first value of a header or empty string if not found.
-func getFirstHeader(headers map[string][]string, key string) string {
-	if values, ok := headers[key]; ok && len(values) > 0 {
-		return values[0]
-	}
-	return ""
 }
 
 // extractMetadataFromHTML extracts title and description from HTML by parsing the DOM.

@@ -54,22 +54,6 @@ func (e *Entry) GetState() State {
 	return StateTooOld
 }
 
-// IsFresh returns true if the entry is still within its TTL.
-func (e *Entry) IsFresh() bool {
-	return time.Since(e.StoredAt) < e.TTL
-}
-
-// IsStale returns true if the entry is past TTL but still within stale window.
-func (e *Entry) IsStale() bool {
-	age := time.Since(e.StoredAt)
-	return age >= e.TTL && age < (e.TTL+e.StaleTime)
-}
-
-// IsTooOld returns true if the entry is past both TTL and stale window.
-func (e *Entry) IsTooOld() bool {
-	return time.Since(e.StoredAt) >= (e.TTL + e.StaleTime)
-}
-
 // WithUpdatedTimestamp creates a copy of the entry with an updated StoredAt timestamp.
 func (e *Entry) WithUpdatedTimestamp() *Entry {
 	updated := *e

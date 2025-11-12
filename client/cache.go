@@ -103,6 +103,10 @@ func (m *CacheManager) refreshInBackground(urlStr string, entry *cache.Entry) {
 			m.logger.Debug("background refresh cancelled due to shutdown", "url", urlStr)
 			return
 		}
+		if refreshCtx.Err() == context.DeadlineExceeded {
+			m.logger.Warn("background refresh timed out", "url", urlStr, "timeout", backgroundRefreshTimeout)
+			return
+		}
 		m.logger.Error("background refresh failed", "url", urlStr, "error", err)
 		return
 	}
