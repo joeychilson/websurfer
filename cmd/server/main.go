@@ -20,7 +20,6 @@ import (
 const (
 	defaultAddr         = ":8080"
 	defaultConfigFile   = "./config.yaml"
-	defaultRedisURL     = "redis://localhost:6379/0"
 	defaultLogLevel     = "info"
 	httpReadTimeout     = 30 * time.Second
 	httpWriteTimeout    = 120 * time.Second
@@ -95,7 +94,9 @@ func setupClient(cfg *appConfig, log *slog.Logger) *client.Client {
 // setupRedis creates and configures the Redis client with connectivity verification.
 func setupRedis(cfg *appConfig, log *slog.Logger) *redis.Client {
 	if cfg.redisURL == "" {
-		log.Error("redis URL is required")
+		log.Error("REDIS_URL environment variable is required",
+			"example", "redis://localhost:6379/0",
+			"help", "set REDIS_URL=redis://host:port/db")
 		os.Exit(1)
 	}
 
@@ -221,7 +222,7 @@ func loadConfig() *appConfig {
 	return &appConfig{
 		addr:       getEnv("ADDR", defaultAddr),
 		configFile: getEnv("CONFIG_FILE", defaultConfigFile),
-		redisURL:   getEnv("REDIS_URL", defaultRedisURL),
+		redisURL:   getEnv("REDIS_URL", ""),
 		logLevel:   getEnv("LOG_LEVEL", defaultLogLevel),
 	}
 }
