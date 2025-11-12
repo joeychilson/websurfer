@@ -162,18 +162,27 @@ func (f *Fetcher) fetchURL(ctx context.Context, urlStr string, opts *FetchOption
 	defer resp.Body.Close()
 
 	maxBodySize := f.config.GetMaxBodySize()
-	var reader io.Reader = resp.Body
 	if maxBodySize > 0 {
-		reader = io.LimitReader(resp.Body, maxBodySize)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response body: %w", err)
+		}
+
+		if int64(len(body)) >= maxBodySize {
+			return nil, fmt.Errorf("response body exceeds maximum size of %d bytes", maxBodySize)
+		}
+
+		return &Response{
+			URL:        resp.Request.URL.String(),
+			StatusCode: resp.StatusCode,
+			Headers:    resp.Header,
+			Body:       body,
+		}, nil
 	}
 
-	body, err := io.ReadAll(reader)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if maxBodySize > 0 && int64(len(body)) >= maxBodySize {
-		return nil, fmt.Errorf("response body exceeds maximum size of %d bytes", maxBodySize)
 	}
 
 	return &Response{

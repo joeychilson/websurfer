@@ -30,15 +30,20 @@ func (p *Parser) Parse(ctx context.Context, content []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
+	tmpName := tmpFile.Name()
 
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
+	defer os.Remove(tmpName)
 
 	if _, err := tmpFile.Write(content); err != nil {
+		tmpFile.Close()
 		return nil, fmt.Errorf("failed to write PDF to temp file: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "pdftotext", "-layout", "-nopgbrk", tmpFile.Name(), "-")
+	if err := tmpFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "pdftotext", "-layout", "-nopgbrk", tmpName, "-")
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

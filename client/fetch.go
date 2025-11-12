@@ -98,7 +98,6 @@ func (f *FetchCoordinator) checkRobotsTxt(ctx context.Context, urlStr string, re
 	delay, err := f.robotsChecker.GetCrawlDelay(ctx, urlStr)
 	if err == nil && delay > 0 {
 		f.logger.Debug("applying crawl-delay from robots.txt", "url", urlStr, "delay", delay)
-		*resolved = f.applyCrawlDelay(*resolved, delay)
 		return delay, nil
 	}
 
@@ -187,19 +186,6 @@ func (f *FetchCoordinator) parseContent(ctx context.Context, urlStr, contentType
 
 	f.logger.Debug("parsing completed", "url", urlStr, "original_size", len(body), "parsed_size", len(parsed))
 	return parsed, nil
-}
-
-// applyCrawlDelay merges crawl-delay from robots.txt into the rate limit config.
-func (f *FetchCoordinator) applyCrawlDelay(resolved config.ResolvedConfig, crawlDelay time.Duration) config.ResolvedConfig {
-	respectRetryAfter := true
-	resolved.RateLimit.RespectRetryAfter = &respectRetryAfter
-
-	if resolved.RateLimit.Delay == 0 || crawlDelay > resolved.RateLimit.Delay {
-		resolved.RateLimit.Delay = crawlDelay
-		resolved.RateLimit.RequestsPerSecond = 0
-	}
-
-	return resolved
 }
 
 // extractMetadataFromHTML extracts title and description from HTML by parsing the DOM.
