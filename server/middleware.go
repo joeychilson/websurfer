@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"os"
 	"strings"
@@ -15,7 +16,7 @@ import (
 type RateLimitConfig struct {
 	RequestLimit   int
 	WindowDuration time.Duration
-	RedisClient    *redis.Client // Optional Redis client for distributed rate limiting
+	RedisClient    *redis.Client
 }
 
 // DefaultRateLimitConfig returns a default rate limit configuration.
@@ -58,10 +59,10 @@ func RateLimit(config RateLimitConfig) func(next http.Handler) http.Handler {
 	return rateLimiter.Handler
 }
 
-// AuthMiddlware returns a middleware that validates API key from Authorization header or X-API-Key header.
+// AuthMiddleware returns a middleware that validates API key from Authorization header or X-API-Key header.
 // The API key is loaded from the API_KEY environment variable.
 // If API_KEY is not set, the middleware is disabled and all requests are allowed.
-func AuthMiddlware() func(next http.Handler) http.Handler {
+func AuthMiddleware() func(next http.Handler) http.Handler {
 	apiKey := os.Getenv("API_KEY")
 
 	if apiKey == "" {
@@ -88,7 +89,7 @@ func AuthMiddlware() func(next http.Handler) http.Handler {
 				return
 			}
 
-			if key != apiKey {
+			if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) != 1 {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				w.Write([]byte(`{"error":"invalid API key","status_code":401}`))

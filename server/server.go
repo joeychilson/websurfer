@@ -73,7 +73,7 @@ func (s *Server) Router() chi.Router {
 		Level:         slog.LevelInfo,
 		RecoverPanics: true,
 	}))
-	r.Use(AuthMiddlware())
+	r.Use(AuthMiddleware())
 	r.Use(s.rateLimiter)
 
 	r.Post("/v1/fetch", s.handleFetch)
