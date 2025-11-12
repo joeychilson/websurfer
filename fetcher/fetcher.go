@@ -202,7 +202,7 @@ func (f *Fetcher) applyFormat(parsedURL *url.URL, format string) string {
 	newURL := *parsedURL
 
 	if strings.HasPrefix(format, "/") {
-		newURL.Path = format
+		newURL.Path = parsedURL.Path + format
 		return newURL.String()
 	}
 

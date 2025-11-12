@@ -42,3 +42,13 @@ sites:
       max_retries: 5
       initial_delay: 2s
       max_delay: 60s
+
+  # Generic documentation sites pattern
+  # Tries both /llms.txt and .md for any URL with /docs or /documentation in path
+  - pattern: "*/docs/*"
+    cache:
+      ttl: 3h
+      stale_time: 12h
+    fetch:
+      check_formats: ["/llms.txt", ".md"]
+      timeout: 30s

@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/httprate"
@@ -54,4 +56,46 @@ func RateLimit(config RateLimitConfig) func(next http.Handler) http.Handler {
 	}
 
 	return rateLimiter.Handler
+}
+
+// AuthMiddlware returns a middleware that validates API key from Authorization header or X-API-Key header.
+// The API key is loaded from the API_KEY environment variable.
+// If API_KEY is not set, the middleware is disabled and all requests are allowed.
+func AuthMiddlware() func(next http.Handler) http.Handler {
+	apiKey := os.Getenv("API_KEY")
+
+	if apiKey == "" {
+		return func(next http.Handler) http.Handler {
+			return next
+		}
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := r.Header.Get("X-API-Key")
+
+			if key == "" {
+				authHeader := r.Header.Get("Authorization")
+				if strings.HasPrefix(authHeader, "Bearer ") {
+					key = strings.TrimPrefix(authHeader, "Bearer ")
+				}
+			}
+
+			if key == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"missing API key","status_code":401,"message":"Provide API key via X-API-Key header or Authorization: Bearer <key>"}`))
+				return
+			}
+
+			if key != apiKey {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"invalid API key","status_code":401}`))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
