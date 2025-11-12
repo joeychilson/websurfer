@@ -15,6 +15,11 @@ import (
 	urlpkg "github.com/joeychilson/websurfer/url"
 )
 
+var (
+	// langRegex extracts the language code from HTML lang attribute
+	langRegex = regexp.MustCompile(`(?i)<html[^>]+lang=["']([^"']+)["']`)
+)
+
 // FetchRequest represents a request to fetch and process a URL.
 type FetchRequest struct {
 	URL       string `json:"url"`
@@ -236,7 +241,6 @@ func (s *Server) sendError(w http.ResponseWriter, message string, statusCode int
 
 // extractLanguage extracts the language from the HTML content.
 func extractLanguage(htmlContent string) string {
-	langRegex := regexp.MustCompile(`(?i)<html[^>]+lang=["']([^"']+)["']`)
 	matches := langRegex.FindStringSubmatch(htmlContent)
 	if len(matches) > 1 {
 		langCode := strings.TrimSpace(matches[1])
