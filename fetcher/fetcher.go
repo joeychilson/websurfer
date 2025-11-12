@@ -31,6 +31,7 @@ type Fetcher struct {
 	config           config.FetchConfig
 	client           *http.Client
 	compiledRewrites []*compiledRewrite
+	literalRewrites  []config.URLRewrite
 }
 
 // compiledRewrite holds a pre-compiled regex and its replacement.
@@ -79,6 +80,8 @@ func New(cfg config.FetchConfig) (*Fetcher, error) {
 	}
 
 	var compiledRewrites []*compiledRewrite
+	var literalRewrites []config.URLRewrite
+
 	for _, rewrite := range cfg.URLRewrites {
 		if rewrite.Type == "regex" {
 			re, err := regexp.Compile(rewrite.Pattern)
@@ -89,6 +92,8 @@ func New(cfg config.FetchConfig) (*Fetcher, error) {
 				regex:       re,
 				replacement: rewrite.Replacement,
 			})
+		} else {
+			literalRewrites = append(literalRewrites, rewrite)
 		}
 	}
 
@@ -96,6 +101,7 @@ func New(cfg config.FetchConfig) (*Fetcher, error) {
 		config:           cfg,
 		client:           client,
 		compiledRewrites: compiledRewrites,
+		literalRewrites:  literalRewrites,
 	}, nil
 }
 
@@ -248,15 +254,14 @@ func (f *Fetcher) applyFormat(parsedURL *url.URL, format string) string {
 func (f *Fetcher) applyRewrites(urlStr string) string {
 	result := urlStr
 
-	for _, compiled := range f.compiledRewrites {
-		result = compiled.regex.ReplaceAllString(result, compiled.replacement)
+	for _, rewrite := range f.literalRewrites {
+		if rewrite.Pattern != "" {
+			result = strings.ReplaceAll(result, rewrite.Pattern, rewrite.Replacement)
+		}
 	}
 
-	for _, rewrite := range f.config.URLRewrites {
-		if rewrite.Pattern == "" || rewrite.Type == "regex" {
-			continue
-		}
-		result = strings.ReplaceAll(result, rewrite.Pattern, rewrite.Replacement)
+	for _, compiled := range f.compiledRewrites {
+		result = compiled.regex.ReplaceAllString(result, compiled.replacement)
 	}
 
 	return result
