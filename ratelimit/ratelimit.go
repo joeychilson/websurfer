@@ -1,11 +1,32 @@
+// Package ratelimit provides per-domain rate limiting with automatic cleanup
+// of inactive domain limiters.
+//
+// Lifecycle Management:
+//
+// Limiter instances MUST be explicitly closed by calling Close() when done
+// to prevent goroutine leaks. A finalizer is registered as a safety net, but
+// finalizers are not guaranteed to run and may run much later than desired.
+//
+// Example usage:
+//
+//	limiter := ratelimit.New(config)
+//	defer limiter.Close()
+//
+//	// Use the limiter...
+//	if err := limiter.Wait(ctx, url); err != nil {
+//	    return err
+//	}
+//	defer limiter.Release(url)
 package ratelimit
 
 import (
 	"context"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -22,11 +43,16 @@ const (
 )
 
 // Limiter manages rate limiting for multiple domains.
+// The limiter MUST be closed by calling Close() when done to prevent goroutine leaks.
+// A finalizer is registered as a safety net, but explicit Close() calls are required
+// for deterministic cleanup.
 type Limiter struct {
 	config   config.RateLimitConfig
 	mu       sync.RWMutex
 	limiters map[string]*domainLimiter
 	stopCh   chan struct{}
+	closed   atomic.Bool
+	wg       sync.WaitGroup
 }
 
 // domainLimiter holds rate limiting state for a single domain.
@@ -39,19 +65,30 @@ type domainLimiter struct {
 }
 
 // New creates a new rate limiter with the given configuration.
+// The returned Limiter must be closed by calling Close() to prevent goroutine leaks.
 func New(cfg config.RateLimitConfig) *Limiter {
 	l := &Limiter{
 		config:   cfg,
 		limiters: make(map[string]*domainLimiter),
 		stopCh:   make(chan struct{}),
 	}
+
+	l.wg.Add(1)
 	go l.cleanupInactiveDomains()
+
+	runtime.SetFinalizer(l, func(limiter *Limiter) {
+		limiter.Close()
+	})
+
 	return l
 }
 
 // Wait blocks until the rate limit allows a request to the given URL.
-// It extracts the domain from the URL and applies per-domain rate limiting.
 func (l *Limiter) Wait(ctx context.Context, urlStr string) error {
+	if l.closed.Load() {
+		return fmt.Errorf("limiter is closed")
+	}
+
 	if !l.config.IsEnabled() {
 		return nil
 	}
@@ -72,6 +109,10 @@ func (l *Limiter) Wait(ctx context.Context, urlStr string) error {
 
 // Release releases resources held for a domain (e.g., concurrency semaphore).
 func (l *Limiter) Release(urlStr string) {
+	if l.closed.Load() {
+		return
+	}
+
 	if !l.config.IsEnabled() {
 		return
 	}
@@ -87,6 +128,10 @@ func (l *Limiter) Release(urlStr string) {
 
 // UpdateRetryAfter updates the retry-after time for a domain based on HTTP response headers.
 func (l *Limiter) UpdateRetryAfter(urlStr string, headers http.Header) {
+	if l.closed.Load() {
+		return
+	}
+
 	if !l.config.RespectRetryAfter {
 		return
 	}
@@ -136,7 +181,15 @@ func (l *Limiter) getLimiterForDomain(domain string) *domainLimiter {
 
 // Close stops the cleanup goroutine and releases resources.
 func (l *Limiter) Close() {
+	if !l.closed.CompareAndSwap(false, true) {
+		return
+	}
+
 	close(l.stopCh)
+
+	l.wg.Wait()
+
+	runtime.SetFinalizer(l, nil)
 }
 
 // newDomainLimiter creates a new domain-specific limiter.
@@ -234,6 +287,8 @@ func parseRetryAfter(value string) time.Time {
 
 // cleanupInactiveDomains periodically removes limiters for domains that haven't been accessed recently.
 func (l *Limiter) cleanupInactiveDomains() {
+	defer l.wg.Done()
+
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
