@@ -47,11 +47,11 @@ func main() {
 		"log_level", cfg.logLevel,
 		"redis_url", cfg.redisURL)
 
-	c := setupClient(cfg, log)
-	defer c.Close()
-
 	redisClient := setupRedis(cfg, log)
 	defer redisClient.Close()
+
+	c := setupClient(cfg, log)
+	defer c.Close()
 
 	c = c.WithCache(cache.New(redisClient, cache.Config{}))
 	log.Info("redis cache enabled")
