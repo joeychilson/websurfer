@@ -102,11 +102,12 @@ func New(cfg config.FetchConfig) (*Fetcher, error) {
 // FetchWithOptions retrieves the content at the given URL with optional fetch options.
 func (f *Fetcher) FetchWithOptions(ctx context.Context, urlStr string, opts *FetchOptions) (*Response, error) {
 	urlStr = f.applyRewrites(urlStr)
-
 	urls := f.buildURLsToTry(urlStr)
 
-	var lastErr error
-	var lastResp *Response
+	var (
+		lastErr  error
+		lastResp *Response
+	)
 
 	for _, tryURL := range urls {
 		resp, err := f.fetchURL(ctx, tryURL, opts)
@@ -115,7 +116,7 @@ func (f *Fetcher) FetchWithOptions(ctx context.Context, urlStr string, opts *Fet
 			continue
 		}
 
-		if f.isSuccessfulResponse(resp.StatusCode) {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return resp, nil
 		}
 
@@ -250,17 +251,4 @@ func (f *Fetcher) applyRewrites(urlStr string) string {
 	}
 
 	return result
-}
-
-// isSuccessfulResponse determines if a status code represents a successful fetch.
-func (f *Fetcher) isSuccessfulResponse(statusCode int) bool {
-	if statusCode >= 200 && statusCode < 300 {
-		return true
-	}
-
-	if statusCode >= 300 && statusCode < 400 && f.config.GetMaxRedirects() == 0 {
-		return true
-	}
-
-	return false
 }
