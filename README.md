@@ -1,6 +1,6 @@
 # WebSurfer
 
-An API for surfing the web.
+An API to help LLMs surf the web.
 
 ## License
 
