@@ -20,6 +20,7 @@ type TruncateResult struct {
 	ReturnedTokens int    `json:"returned_tokens"`
 	TotalChars     int    `json:"total_chars"`
 	TotalTokens    int    `json:"total_tokens"`
+	NextOffset     int    `json:"next_offset"` // Character offset for next page (0 if not truncated)
 }
 
 // TruncateBytes truncates content to fit within maxTokens using smart boundaries.
@@ -35,6 +36,7 @@ func Truncate(content []byte, contentType string, maxTokens int) *TruncateResult
 			ReturnedTokens: totalTokens,
 			TotalChars:     totalChars,
 			TotalTokens:    totalTokens,
+			NextOffset:     0, // No next page
 		}
 	}
 
@@ -52,6 +54,7 @@ func Truncate(content []byte, contentType string, maxTokens int) *TruncateResult
 		ReturnedTokens: returnedTokens,
 		TotalChars:     totalChars,
 		TotalTokens:    totalTokens,
+		NextOffset:     truncateAt, // Start next page at this character position
 	}
 }
 

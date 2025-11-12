@@ -10,9 +10,7 @@ import (
 
 // TestTruncatePaginationNoDataLoss verifies pagination doesn't lose content between chunks.
 // This is CRITICAL for LLMs - they need complete information across pages.
-// TODO: This test currently fails - implementation needs improvement for perfect pagination
 func TestTruncatePaginationNoDataLoss(t *testing.T) {
-	t.Skip("TODO: Pagination logic needs refinement to guarantee zero data loss")
 	// Create large content (simulate 10KB document)
 	var content strings.Builder
 	for i := 0; i < 100; i++ {
@@ -25,44 +23,42 @@ func TestTruncatePaginationNoDataLoss(t *testing.T) {
 	}
 
 	original := []byte(content.String())
-	contentType := "text/markdown"
+	contentType := "text/plain" // Use text/plain for consistent token estimation
 	maxTokens := 500
 
-	// Paginate through entire document
+	// Paginate through entire document using NextOffset
 	var reconstructed strings.Builder
-	offset := 0
+	charOffset := 0
+	pageCount := 0
 
 	for {
-		// Calculate character offset from token offset
-		totalTokens := EstimateTokens(original, contentType)
-		if offset >= totalTokens {
-			break
-		}
-
-		charsPerToken := float64(len(original)) / float64(totalTokens)
-		charOffset := int(float64(offset) * charsPerToken)
-
 		if charOffset >= len(original) {
 			break
 		}
 
+		// Get content from current offset
 		contentFromOffset := original[charOffset:]
 		result := Truncate(contentFromOffset, contentType, maxTokens)
 
 		reconstructed.WriteString(result.Content)
-		offset += result.ReturnedTokens
+		pageCount++
 
 		if !result.Truncated {
+			// Last page - we're done
 			break
 		}
+
+		// Use NextOffset to get the exact position for the next page
+		// Since we're passing a slice starting at charOffset, add that back
+		charOffset += result.NextOffset
 	}
 
 	// Verify no content was lost
 	originalStr := strings.TrimSpace(string(original))
 	reconstructedStr := strings.TrimSpace(reconstructed.String())
 
-	// Allow minor whitespace differences, but content should match
 	assert.Equal(t, originalStr, reconstructedStr, "pagination should not lose content")
+	t.Logf("Successfully paginated document into %d pages without data loss", pageCount)
 }
 
 // TestTruncateUTF8BoundarySafety verifies truncation never splits UTF-8 characters.
