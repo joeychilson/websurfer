@@ -25,61 +25,68 @@ const (
 	httpWriteTimeout    = 120 * time.Second
 	httpIdleTimeout     = 60 * time.Second
 	httpShutdownTimeout = 10 * time.Second
-	redisConnectTimeout = 5 * time.Second
-	redisMaxRetries     = 3
-	redisRetryDelay     = 1 * time.Second
 )
 
-type appConfig struct {
-	addr       string
-	configFile string
-	redisURL   string
-	logLevel   string
-}
-
 func main() {
-	cfg := loadConfig()
+	addr := getEnv("ADDR", defaultAddr)
+	configFile := getEnv("CONFIG_FILE", defaultConfigFile)
+	redisURL := getEnv("REDIS_URL", "")
+	logLevel := getEnv("LOG_LEVEL", defaultLogLevel)
 
-	log := setupLogger(cfg.logLevel)
-	log.Info("starting websurfer API server",
-		"addr", cfg.addr,
-		"log_level", cfg.logLevel,
-		"redis_url", cfg.redisURL)
+	var level slog.Level
+	switch logLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		slog.Warn("unknown log level, using info", "level", logLevel)
+		level = slog.LevelInfo
+	}
+	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	redisClient := setupRedis(cfg, log)
-	defer redisClient.Close()
+	log.Info("starting websurfer API server", "log_level", logLevel)
 
-	c := setupClient(cfg, log)
-	defer c.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	c = c.WithCache(cache.New(redisClient, cache.Config{}))
-	log.Info("redis cache enabled")
-
-	srv := setupServer(c, log, redisClient)
-	httpServer := createHTTPServer(cfg.addr, srv.Router())
-
-	if err := runServer(httpServer, log); err != nil {
-		log.Error("server error", "error", err)
+	if redisURL == "" {
+		log.Error("REDIS_URL environment variable is required")
 		os.Exit(1)
 	}
 
-	log.Info("server shutdown complete")
-}
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		log.Error("failed to parse redis URL", "error", err)
+		os.Exit(1)
+	}
 
-// setupClient creates and configures the websurfer client.
-func setupClient(cfg *appConfig, log *slog.Logger) *client.Client {
+	redisClient := redis.NewClient(opts)
+	defer redisClient.Close()
+
+	log.Info("connecting to redis", "url", redisURL)
+
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Error("failed to connect to redis", "error", err, "url", redisURL)
+		os.Exit(1)
+	}
+
+	log.Info("redis connection established", "url", redisURL)
+
 	var c *client.Client
-	var err error
-
-	if _, statErr := os.Stat(cfg.configFile); statErr == nil {
-		log.Info("loading config from file", "file", cfg.configFile)
-		c, err = client.NewFromFile(cfg.configFile)
+	if _, statErr := os.Stat(configFile); statErr == nil {
+		log.Info("loading config from file", "file", configFile)
+		c, err = client.NewFromFile(configFile)
 		if err != nil {
 			log.Error("failed to load config from file", "error", err)
 			os.Exit(1)
 		}
 	} else {
-		log.Info("using default configuration (config file not found)", "checked", cfg.configFile)
+		log.Info("using default configuration (config file not found)", "checked", configFile)
 		clientCfg := config.New()
 		c, err = client.New(clientCfg)
 		if err != nil {
@@ -87,93 +94,33 @@ func setupClient(cfg *appConfig, log *slog.Logger) *client.Client {
 			os.Exit(1)
 		}
 	}
+	c = c.WithLogger(log)
+	defer c.Close()
 
-	return c.WithLogger(log)
-}
+	c = c.WithCache(cache.New(redisClient, cache.Config{}))
+	log.Info("redis cache enabled")
 
-// setupRedis creates and configures the Redis client with connectivity verification.
-func setupRedis(cfg *appConfig, log *slog.Logger) *redis.Client {
-	if cfg.redisURL == "" {
-		log.Error("REDIS_URL environment variable is required",
-			"example", "redis://localhost:6379/0",
-			"help", "set REDIS_URL=redis://host:port/db")
-		os.Exit(1)
-	}
-
-	opts, err := redis.ParseURL(cfg.redisURL)
-	if err != nil {
-		log.Error("failed to parse redis URL", "error", err)
-		os.Exit(1)
-	}
-
-	redisClient := redis.NewClient(opts)
-
-	log.Info("connecting to redis", "url", cfg.redisURL, "timeout", redisConnectTimeout)
-
-	var lastErr error
-	for attempt := 1; attempt <= redisMaxRetries; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), redisConnectTimeout)
-		err := redisClient.Ping(ctx).Err()
-		cancel()
-
-		if err == nil {
-			log.Info("redis connection established", "url", cfg.redisURL, "attempt", attempt)
-			return redisClient
-		}
-
-		lastErr = err
-		log.Warn("redis connection failed",
-			"attempt", attempt,
-			"max_attempts", redisMaxRetries,
-			"error", err,
-			"url", cfg.redisURL)
-
-		if attempt < redisMaxRetries {
-			log.Info("retrying redis connection", "delay", redisRetryDelay)
-			time.Sleep(redisRetryDelay)
-		}
-	}
-
-	log.Error("failed to connect to redis after retries",
-		"attempts", redisMaxRetries,
-		"error", lastErr,
-		"url", cfg.redisURL)
-	os.Exit(1)
-	return nil
-}
-
-// setupServer creates the API server with the given configuration.
-func setupServer(c *client.Client, log *slog.Logger, redisClient *redis.Client) *server.Server {
-	serverConfig := &server.ServerConfig{
-		RedisClient: redisClient,
-	}
-
-	srv, err := server.New(c, log, serverConfig)
+	srv, err := server.New(c, log, &server.ServerConfig{RedisClient: redisClient})
 	if err != nil {
 		log.Error("failed to create server", "error", err)
 		os.Exit(1)
 	}
 
-	return srv
-}
-
-// createHTTPServer creates an HTTP server with standard timeouts.
-func createHTTPServer(addr string, handler http.Handler) *http.Server {
-	return &http.Server{
+	httpServer := &http.Server{
 		Addr:         addr,
-		Handler:      handler,
+		Handler:      srv.Router(),
 		ReadTimeout:  httpReadTimeout,
 		WriteTimeout: httpWriteTimeout,
 		IdleTimeout:  httpIdleTimeout,
 	}
-}
 
-// runServer starts the HTTP server and handles graceful shutdown.
-func runServer(httpServer *http.Server, log *slog.Logger) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	setupSignalHandler(cancel, log)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		log.Info("received shutdown signal", "signal", sig.String())
+		cancel()
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -185,69 +132,20 @@ func runServer(httpServer *http.Server, log *slog.Logger) error {
 
 	select {
 	case <-ctx.Done():
-		return gracefulShutdown(httpServer, log)
+		log.Info("shutting down API server")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+		defer shutdownCancel()
+
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Error("server shutdown error", "error", err)
+			os.Exit(1)
+		}
 	case err := <-errCh:
-		return err
-	}
-}
-
-// setupSignalHandler configures OS signal handling for graceful shutdown.
-func setupSignalHandler(cancel context.CancelFunc, log *slog.Logger) {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		sig := <-sigChan
-		log.Info("received shutdown signal", "signal", sig.String())
-		cancel()
-	}()
-}
-
-// gracefulShutdown performs a graceful shutdown of the HTTP server.
-func gracefulShutdown(httpServer *http.Server, log *slog.Logger) error {
-	log.Info("shutting down API server")
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
-	defer shutdownCancel()
-
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Error("server shutdown error", "error", err)
-		return err
+		log.Error("server error", "error", err)
+		os.Exit(1)
 	}
 
-	return nil
-}
-
-func loadConfig() *appConfig {
-	return &appConfig{
-		addr:       getEnv("ADDR", defaultAddr),
-		configFile: getEnv("CONFIG_FILE", defaultConfigFile),
-		redisURL:   getEnv("REDIS_URL", ""),
-		logLevel:   getEnv("LOG_LEVEL", defaultLogLevel),
-	}
-}
-
-func setupLogger(level string) *slog.Logger {
-	var logLevel slog.Level
-	switch level {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "info":
-		logLevel = slog.LevelInfo
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		slog.Warn("unknown log level, using info", "level", level)
-		logLevel = slog.LevelInfo
-	}
-
-	opts := &slog.HandlerOptions{
-		Level: logLevel,
-	}
-	handler := slog.NewJSONHandler(os.Stderr, opts)
-	return slog.New(handler)
+	log.Info("server shutdown complete")
 }
 
 func getEnv(key, defaultValue string) string {
