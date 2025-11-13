@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -143,9 +144,12 @@ func (f *FetchCoordinator) buildCacheEntry(ctx context.Context, urlStr string, f
 		lastModified = values[0]
 	}
 
-	var title, description string
+	var title, description, faviconURL string
 	if strings.Contains(strings.ToLower(contentType), "html") && len(fetcherResp.Body) > 0 {
-		title, description = extractMetadataFromHTML(fetcherResp.Body)
+		title, description, faviconURL = extractMetadataFromHTML(fetcherResp.Body)
+		if faviconURL != "" {
+			faviconURL = resolveFaviconURL(fetcherResp.URL, faviconURL)
+		}
 	}
 
 	body, err := f.parseContent(ctx, urlStr, contentType, fetcherResp.Body)
@@ -160,6 +164,7 @@ func (f *FetchCoordinator) buildCacheEntry(ctx context.Context, urlStr string, f
 		Body:         body,
 		Title:        title,
 		Description:  description,
+		FaviconURL:   faviconURL,
 		LastModified: lastModified,
 		StoredAt:     time.Now(),
 	}, nil
@@ -188,11 +193,11 @@ func (f *FetchCoordinator) parseContent(ctx context.Context, urlStr, contentType
 	return parsed, nil
 }
 
-// extractMetadataFromHTML extracts title and description from HTML by parsing the DOM.
-func extractMetadataFromHTML(htmlContent []byte) (title, description string) {
+// extractMetadataFromHTML extracts title, description, and favicon URL from HTML by parsing the DOM.
+func extractMetadataFromHTML(htmlContent []byte) (title, description, faviconURL string) {
 	doc, err := html.Parse(bytes.NewReader(htmlContent))
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 
 	var extract func(*html.Node)
@@ -215,6 +220,16 @@ func extractMetadataFromHTML(htmlContent []byte) (title, description string) {
 						description = getAttr(node, "content")
 					}
 				}
+			case "link":
+				if faviconURL == "" {
+					rel := strings.ToLower(getAttr(node, "rel"))
+					if rel == "icon" || rel == "shortcut icon" || rel == "apple-touch-icon" {
+						href := getAttr(node, "href")
+						if href != "" {
+							faviconURL = href
+						}
+					}
+				}
 			}
 		}
 
@@ -228,7 +243,7 @@ func extractMetadataFromHTML(htmlContent []byte) (title, description string) {
 	title = strings.TrimSpace(title)
 	description = strings.TrimSpace(description)
 
-	return title, description
+	return title, description, faviconURL
 }
 
 // getNodeText extracts all text content from a node and its children.
@@ -253,4 +268,24 @@ func getAttr(n *html.Node, key string) string {
 		}
 	}
 	return ""
+}
+
+// resolveFaviconURL resolves a relative favicon URL to an absolute URL using the base page URL.
+func resolveFaviconURL(baseURL, faviconPath string) string {
+	if faviconPath == "" {
+		return ""
+	}
+
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return faviconPath
+	}
+
+	favicon, err := url.Parse(faviconPath)
+	if err != nil {
+		return faviconPath
+	}
+
+	resolved := base.ResolveReference(favicon)
+	return resolved.String()
 }

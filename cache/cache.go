@@ -32,6 +32,7 @@ type Entry struct {
 	Body         []byte
 	Title        string
 	Description  string
+	FaviconURL   string
 	LastModified string
 	StoredAt     time.Time
 	TTL          time.Duration

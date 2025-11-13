@@ -35,6 +35,7 @@ type Metadata struct {
 	Language        string `json:"language,omitempty"`
 	Title           string `json:"title,omitempty"`
 	Description     string `json:"description,omitempty"`
+	FaviconURL      string `json:"favicon_url,omitempty"`
 	EstimatedTokens int    `json:"estimated_tokens"`
 	LastModified    string `json:"last_modified,omitempty"`
 	CacheState      string `json:"cache_state,omitempty"`
@@ -269,6 +270,7 @@ func buildFetchMetadata(resp *client.Response, contentType, language, lastModifi
 		Language:        language,
 		Title:           resp.Title,
 		Description:     resp.Description,
+		FaviconURL:      resp.FaviconURL,
 		EstimatedTokens: tokens,
 		LastModified:    lastModified,
 		CacheState:      resp.CacheState,

@@ -114,6 +114,7 @@ type Response struct {
 	Body        []byte
 	Title       string
 	Description string
+	FaviconURL  string
 	CacheState  string
 	CachedAt    time.Time
 }
@@ -169,6 +170,7 @@ func buildResponse(entry *cache.Entry, cacheState string) *Response {
 		Body:        entry.Body,
 		Title:       entry.Title,
 		Description: entry.Description,
+		FaviconURL:  entry.FaviconURL,
 		CacheState:  cacheState,
 		CachedAt:    cachedAt,
 	}
