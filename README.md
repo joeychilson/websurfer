@@ -2,7 +2,7 @@
 
 WebSurfer is a high-performance API designed to help Large Language Models (LLMs) surf the web. It fetches, parses, and processes web content (HTML, PDF, Markdown) into LLM-friendly formats with built-in token estimation, pagination, and caching.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/gBaAFr?referralCode=NhCCIt&utm_medium=integration&utm_source=template&utm_campaign=generic)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/websurfer?referralCode=NhCCIt&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 ## Features
 
@@ -73,12 +73,25 @@ See `config.yaml` to tune:
 
 ## Usage
 
+### Authentication
+
+All API endpoints (except `/health`) require authentication via API key:
+
+```bash
+# Via Authorization header
+-H "Authorization: Bearer YOUR_API_KEY"
+
+# Or via X-API-Key header
+-H "X-API-Key: YOUR_API_KEY"
+```
+
 ### Fetch a URL
 
 Endpoint: `POST /v1/fetch`
 
 ```bash
 curl -X POST http://localhost:8080/v1/fetch \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
