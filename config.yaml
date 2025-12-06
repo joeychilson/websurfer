@@ -20,7 +20,7 @@ default:
   rate_limit:
     respect_retry_after: true
     requests_per_second: 10.0
-    burst: 10
+    burst: 20
   # Retry configuration for transient failures
   retry:
     max_retries: 3
