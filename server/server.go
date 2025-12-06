@@ -73,11 +73,14 @@ func (s *Server) Router() chi.Router {
 		Level:         slog.LevelInfo,
 		RecoverPanics: true,
 	}))
-	r.Use(AuthMiddleware())
-	r.Use(s.rateLimiter)
 
-	r.Post("/v1/fetch", s.handleFetch)
 	r.Get("/health", s.handleHealth)
+
+	r.Group(func(r chi.Router) {
+		r.Use(AuthMiddleware())
+		r.Use(s.rateLimiter)
+		r.Post("/v1/fetch", s.handleFetch)
+	})
 
 	return r
 }

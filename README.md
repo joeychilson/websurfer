@@ -2,6 +2,8 @@
 
 WebSurfer is a high-performance API designed to help Large Language Models (LLMs) surf the web. It fetches, parses, and processes web content (HTML, PDF, Markdown) into LLM-friendly formats with built-in token estimation, pagination, and caching.
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/gBaAFr?referralCode=NhCCIt&utm_medium=integration&utm_source=template&utm_campaign=generic)
+
 ## Features
 
 - **Smart Fetching**: Handles dynamic content, redirects, and various content types.
@@ -13,7 +15,7 @@ WebSurfer is a high-performance API designed to help Large Language Models (LLMs
 
 ## Prerequisites
 
-- **Go** (1.22 or later)
+- **Go** (1.25 or later)
 - **Redis** (required for caching)
 
 ## Getting Started
