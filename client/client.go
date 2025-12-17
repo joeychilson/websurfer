@@ -15,6 +15,7 @@ import (
 	"github.com/joeychilson/websurfer/parser/rules"
 	"github.com/joeychilson/websurfer/ratelimit"
 	"github.com/joeychilson/websurfer/robots"
+	urlpkg "github.com/joeychilson/websurfer/url"
 )
 
 // Client is a thin facade that coordinates FetchCoordinator and CacheManager.
@@ -121,6 +122,8 @@ type Response struct {
 
 // Fetch retrieves content from the given URL, respecting robots.txt and rate limits.
 func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
+	urlStr = urlpkg.Transform(urlStr)
+
 	c.logger.Debug("fetch started", "url", urlStr)
 
 	entry := c.cacheManager.Get(ctx, urlStr)
