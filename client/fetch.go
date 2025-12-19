@@ -15,6 +15,7 @@ import (
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/config"
 	"github.com/joeychilson/websurfer/fetcher"
+	"github.com/joeychilson/websurfer/headless"
 	"github.com/joeychilson/websurfer/parser"
 	"github.com/joeychilson/websurfer/ratelimit"
 	"github.com/joeychilson/websurfer/retry"
@@ -27,6 +28,7 @@ type FetchCoordinator struct {
 	robotsChecker *robots.Checker
 	limiter       *ratelimit.Limiter
 	parser        *parser.Registry
+	headless      *headless.Browser
 	logger        *slog.Logger
 }
 
@@ -36,6 +38,7 @@ func NewFetchCoordinator(
 	robotsChecker *robots.Checker,
 	limiter *ratelimit.Limiter,
 	parser *parser.Registry,
+	headlessBrowser *headless.Browser,
 	logger *slog.Logger,
 ) *FetchCoordinator {
 	return &FetchCoordinator{
@@ -43,6 +46,7 @@ func NewFetchCoordinator(
 		robotsChecker: robotsChecker,
 		limiter:       limiter,
 		parser:        parser,
+		headless:      headlessBrowser,
 		logger:        logger,
 	}
 }
@@ -144,6 +148,10 @@ func (f *FetchCoordinator) buildCacheEntry(ctx context.Context, urlStr string, f
 		lastModified = values[0]
 	}
 
+	entryURL := fetcherResp.URL
+	entryStatus := fetcherResp.StatusCode
+	entryHeaders := fetcherResp.Headers
+
 	var title, description, faviconURL string
 	if strings.Contains(strings.ToLower(contentType), "html") && len(fetcherResp.Body) > 0 {
 		title, description, faviconURL = extractMetadataFromHTML(fetcherResp.Body)
@@ -157,10 +165,46 @@ func (f *FetchCoordinator) buildCacheEntry(ctx context.Context, urlStr string, f
 		return nil, err
 	}
 
+	if f.headless != nil && strings.Contains(strings.ToLower(contentType), "html") {
+		if headless.NeedsRendering(fetcherResp.Body, body) {
+			f.logger.Info("using headless rendering", "url", urlStr)
+
+			headlessResp, err := f.headless.Render(ctx, urlStr)
+			if err != nil {
+				f.logger.Warn("headless rendering failed, using static content", "url", urlStr, "error", err)
+			} else {
+				if headlessResp.URL != "" {
+					entryURL = headlessResp.URL
+				}
+				if headlessResp.StatusCode != 0 {
+					entryStatus = headlessResp.StatusCode
+				}
+				if headlessResp.Headers != nil {
+					entryHeaders = headlessResp.Headers
+				}
+
+				title, description, faviconURL = extractMetadataFromHTML(headlessResp.Body)
+				if faviconURL != "" {
+					faviconURL = resolveFaviconURL(entryURL, faviconURL)
+				}
+
+				headlessContentType := contentType
+				if values, ok := headlessResp.Headers["Content-Type"]; ok && len(values) > 0 {
+					headlessContentType = values[0]
+				}
+
+				body, err = f.parseContent(ctx, urlStr, headlessContentType, headlessResp.Body)
+				if err != nil {
+					f.logger.Warn("failed to parse headless content", "url", urlStr, "error", err)
+				}
+			}
+		}
+	}
+
 	return &cache.Entry{
-		URL:          fetcherResp.URL,
-		StatusCode:   fetcherResp.StatusCode,
-		Headers:      fetcherResp.Headers,
+		URL:          entryURL,
+		StatusCode:   entryStatus,
+		Headers:      entryHeaders,
 		Body:         body,
 		Title:        title,
 		Description:  description,

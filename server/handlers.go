@@ -140,12 +140,28 @@ func (s *Server) buildPaginatedResponse(fetched *client.Response, workingBytes [
 		maxTokens = 4000
 	}
 
-	charsPerToken := float64(len(workingBytes)) / float64(totalTokens)
-	charOffset := int(float64(req.Offset) * charsPerToken)
+	if totalTokens == 0 {
+		metadata := buildFetchMetadata(fetched, contentType, language, lastModified, 0)
+		return &FetchResponse{
+			Metadata: metadata,
+			Content:  "",
+			Pagination: &Pagination{
+				Offset:      req.Offset,
+				Limit:       maxTokens,
+				TotalTokens: 0,
+				HasMore:     false,
+			},
+		}, nil
+	}
 
-	if charOffset >= len(workingBytes) {
+	charsPerToken := float64(len(workingBytes)) / float64(totalTokens)
+	charOffsetFloat := float64(req.Offset) * charsPerToken
+
+	if charOffsetFloat >= float64(len(workingBytes)) || charOffsetFloat < 0 {
 		return nil, fmt.Errorf("offset %d exceeds content length (total tokens: %d)", req.Offset, totalTokens)
 	}
+
+	charOffset := int(charOffsetFloat)
 
 	contentFromOffset := workingBytes[charOffset:]
 

@@ -9,6 +9,7 @@ import (
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/config"
 	"github.com/joeychilson/websurfer/fetcher"
+	"github.com/joeychilson/websurfer/headless"
 	"github.com/joeychilson/websurfer/parser"
 	htmlparser "github.com/joeychilson/websurfer/parser/html"
 	"github.com/joeychilson/websurfer/parser/pdf"
@@ -67,7 +68,9 @@ func New(cfg *config.Config) (*Client, error) {
 	parserRegistry.Register([]string{"text/html", "application/xhtml+xml"}, htmlParser)
 	parserRegistry.Register([]string{"application/pdf"}, pdfParser)
 
-	coordinator := NewFetchCoordinator(cfg, robotsChecker, limiter, parserRegistry, logger)
+	headlessBrowser := headless.New(headless.WithLogger(logger))
+
+	coordinator := NewFetchCoordinator(cfg, robotsChecker, limiter, parserRegistry, headlessBrowser, logger)
 	cacheManager := NewCacheManager(nil, logger, coordinator)
 
 	return &Client{
