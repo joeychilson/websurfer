@@ -174,20 +174,10 @@ type FetchConfig struct {
 	Headers              map[string]string `yaml:"headers,omitempty"`
 	CheckFormats         []string          `yaml:"check_formats,omitempty"`
 	URLRewrites          []URLRewrite      `yaml:"url_rewrites,omitempty"`
-	RespectRobotsTxt     *bool             `yaml:"respect_robots_txt,omitempty"`
-	RobotsTxtCacheTTL    time.Duration     `yaml:"robots_txt_cache_ttl,omitempty"`
 	FollowRedirects      *bool             `yaml:"follow_redirects,omitempty"`
 	MaxRedirects         int               `yaml:"max_redirects,omitempty"`
 	EnableSSRFProtection *bool             `yaml:"enable_ssrf_protection,omitempty"`
 	MaxBodySize          int64             `yaml:"max_body_size,omitempty"`
-}
-
-// GetRespectRobotsTxt returns whether to respect robots.txt (default: false)
-func (f *FetchConfig) GetRespectRobotsTxt() bool {
-	if f.RespectRobotsTxt != nil {
-		return *f.RespectRobotsTxt
-	}
-	return false
 }
 
 // GetFollowRedirects returns whether to follow redirects (default: false)
@@ -216,14 +206,6 @@ func (f *FetchConfig) GetHeaders() map[string]string {
 	}
 	maps.Copy(headers, f.Headers)
 	return headers
-}
-
-// GetRobotsTxtCacheTTL returns the robots.txt cache TTL with a default of 24 hours
-func (f *FetchConfig) GetRobotsTxtCacheTTL() time.Duration {
-	if f.RobotsTxtCacheTTL > 0 {
-		return f.RobotsTxtCacheTTL
-	}
-	return 24 * time.Hour
 }
 
 // GetMaxRedirects returns the max number of redirects with a default of 10
@@ -455,10 +437,6 @@ func (c *Config) validateFetch(ctx string, f FetchConfig) error {
 		return fmt.Errorf("%s.fetch: 'timeout' must be >= 0", ctx)
 	}
 
-	if f.RobotsTxtCacheTTL < 0 {
-		return fmt.Errorf("%s.fetch: 'robots_txt_cache_ttl' must be >= 0", ctx)
-	}
-
 	if f.MaxRedirects < 0 {
 		return fmt.Errorf("%s.fetch: 'max_redirects' must be >= 0", ctx)
 	}
@@ -585,13 +563,6 @@ func mergeFetch(base, override FetchConfig) FetchConfig {
 
 	if len(override.URLRewrites) > 0 {
 		result.URLRewrites = override.URLRewrites
-	}
-
-	if override.RespectRobotsTxt != nil {
-		result.RespectRobotsTxt = override.RespectRobotsTxt
-	}
-	if override.RobotsTxtCacheTTL > 0 {
-		result.RobotsTxtCacheTTL = override.RobotsTxtCacheTTL
 	}
 
 	if override.FollowRedirects != nil {

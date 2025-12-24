@@ -11,8 +11,6 @@ default:
   fetch:
     user_agent: "Mozilla/5.0 (compatible; websurfer/1.0; +https://github.com/joeychilson/websurfer)"
     timeout: 30s
-    respect_robots_txt: true
-    robots_txt_cache_ttl: 24h
     follow_redirects: true
     enable_ssrf_protection: true
     max_redirects: 10
@@ -38,7 +36,6 @@ sites:
     fetch:
       user_agent: "websurfer/1.0 contact@websurfer.dev"
       timeout: 60s
-      respect_robots_txt: false
     rate_limit:
       requests_per_second: 10.0
       burst: 10
@@ -47,6 +44,14 @@ sites:
       max_retries: 5
       initial_delay: 2s
       max_delay: 60s
+
+  # arXiv - longer timeout for PDF downloads
+  - pattern: "*.arxiv.org"
+    fetch:
+      timeout: 60s
+    cache:
+      ttl: 24h
+      stale_time: 168h
 
   # Generic documentation sites pattern
   # Matches docs subdomains (docs.example.com) and (example.com/docs/*)

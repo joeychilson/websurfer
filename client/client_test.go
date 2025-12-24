@@ -180,20 +180,9 @@ func boolPtr(b bool) *bool {
 }
 
 // TestClientFetchEndToEnd verifies complete fetch pipeline integration.
-// CRITICAL: Tests robots.txt → rate limit → fetch → parse → cache flow.
+// CRITICAL: Tests rate limit → fetch → parse → cache flow.
 func TestClientFetchEndToEnd(t *testing.T) {
-	// Create test server with robots.txt and HTML page
-	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-
-		if r.URL.Path == "/robots.txt" {
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("User-agent: *\nAllow: /\n"))
-			return
-		}
-
 		if r.URL.Path == "/page" {
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(http.StatusOK)
@@ -208,16 +197,7 @@ func TestClientFetchEndToEnd(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create config with robots.txt checking enabled
-	cfg := &config.Config{
-		Default: config.DefaultConfig{
-			Fetch: config.FetchConfig{
-				RespectRobotsTxt: boolPtr(true),
-			},
-		},
-	}
-
-	client, err := New(cfg)
+	client, err := New(nil)
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -228,64 +208,12 @@ func TestClientFetchEndToEnd(t *testing.T) {
 	assert.Contains(t, string(resp.Body), "# Hello", "HTML should be converted to markdown")
 	assert.Contains(t, string(resp.Body), "World", "content should be preserved")
 	assert.Equal(t, "Test Page", resp.Title, "title should be extracted")
-
-	// Verify robots.txt was checked (at least 2 calls: robots.txt + page)
-	assert.GreaterOrEqual(t, callCount, 2, "should have fetched robots.txt and page")
-}
-
-// TestClientFetchRobotsDisallowed verifies robots.txt blocking works.
-// CRITICAL: Respects robots.txt to avoid being blocked by sites.
-func TestClientFetchRobotsDisallowed(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/robots.txt" {
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("User-agent: *\nDisallow: /private/\n"))
-			return
-		}
-
-		if r.URL.Path == "/private/secret" {
-			// This should never be called
-			t.Error("robots.txt disallow was not enforced!")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("SECRET DATA"))
-			return
-		}
-
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	// Create config with robots.txt checking enabled
-	cfg := &config.Config{
-		Default: config.DefaultConfig{
-			Fetch: config.FetchConfig{
-				RespectRobotsTxt: boolPtr(true),
-			},
-		},
-	}
-
-	client, err := New(cfg)
-	require.NoError(t, err)
-	defer client.Close()
-
-	_, err = client.Fetch(context.Background(), server.URL+"/private/secret")
-
-	assert.Error(t, err, "should be blocked by robots.txt")
-	assert.Contains(t, err.Error(), "robots.txt", "error should mention robots.txt")
 }
 
 // TestClientConcurrentFetches verifies concurrent requests don't cause race conditions.
 // CRITICAL: Multiple LLM tool calls happening simultaneously must not corrupt state.
 func TestClientConcurrentFetches(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/robots.txt" {
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("User-agent: *\nAllow: /\n"))
-			return
-		}
-
 		// Simulate different pages
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)

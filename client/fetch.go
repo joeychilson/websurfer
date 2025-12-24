@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -19,35 +18,31 @@ import (
 	"github.com/joeychilson/websurfer/parser"
 	"github.com/joeychilson/websurfer/ratelimit"
 	"github.com/joeychilson/websurfer/retry"
-	"github.com/joeychilson/websurfer/robots"
 )
 
-// FetchCoordinator coordinates robots.txt checking, rate limiting, and HTTP fetching.
+// FetchCoordinator coordinates rate limiting and HTTP fetching.
 type FetchCoordinator struct {
-	config        *config.Config
-	robotsChecker *robots.Checker
-	limiter       *ratelimit.Limiter
-	parser        *parser.Registry
-	headless      *headless.Browser
-	logger        *slog.Logger
+	config   *config.Config
+	limiter  *ratelimit.Limiter
+	parser   *parser.Registry
+	headless *headless.Browser
+	logger   *slog.Logger
 }
 
 // NewFetchCoordinator creates a new fetch coordinator.
 func NewFetchCoordinator(
 	cfg *config.Config,
-	robotsChecker *robots.Checker,
 	limiter *ratelimit.Limiter,
 	parser *parser.Registry,
 	headlessBrowser *headless.Browser,
 	logger *slog.Logger,
 ) *FetchCoordinator {
 	return &FetchCoordinator{
-		config:        cfg,
-		robotsChecker: robotsChecker,
-		limiter:       limiter,
-		parser:        parser,
-		headless:      headlessBrowser,
-		logger:        logger,
+		config:   cfg,
+		limiter:  limiter,
+		parser:   parser,
+		headless: headlessBrowser,
+		logger:   logger,
 	}
 }
 
@@ -58,18 +53,9 @@ func (f *FetchCoordinator) Close() {
 	}
 }
 
-// Fetch performs a complete fetch operation with robots.txt checking, rate limiting, and parsing.
+// Fetch performs a complete fetch operation with rate limiting and parsing.
 func (f *FetchCoordinator) Fetch(ctx context.Context, urlStr string, ifModifiedSince string) (*cache.Entry, error) {
 	resolved := f.config.GetConfigForURL(urlStr)
-
-	crawlDelay, err := f.checkRobotsTxt(ctx, urlStr, &resolved)
-	if err != nil {
-		return nil, err
-	}
-
-	if crawlDelay > 0 {
-		f.applyCrawlDelayToLimiter(urlStr, crawlDelay)
-	}
 
 	fetcherResp, err := f.performFetch(ctx, urlStr, resolved, ifModifiedSince)
 	if err != nil {
@@ -82,38 +68,6 @@ func (f *FetchCoordinator) Fetch(ctx context.Context, urlStr string, ifModifiedS
 	}
 
 	return f.buildCacheEntry(ctx, urlStr, fetcherResp)
-}
-
-// checkRobotsTxt checks robots.txt and returns the crawl delay if configured.
-func (f *FetchCoordinator) checkRobotsTxt(ctx context.Context, urlStr string, resolved *config.ResolvedConfig) (time.Duration, error) {
-	if !resolved.Fetch.GetRespectRobotsTxt() {
-		return 0, nil
-	}
-
-	allowed, err := f.robotsChecker.IsAllowed(ctx, urlStr)
-	if err != nil {
-		f.logger.Error("robots.txt check failed", "url", urlStr, "error", err)
-		return 0, fmt.Errorf("robots.txt check failed: %w", err)
-	}
-	if !allowed {
-		f.logger.Warn("blocked by robots.txt", "url", urlStr)
-		return 0, fmt.Errorf("disallowed by robots.txt: %s", urlStr)
-	}
-
-	delay, err := f.robotsChecker.GetCrawlDelay(ctx, urlStr)
-	if err == nil && delay > 0 {
-		f.logger.Debug("applying crawl-delay from robots.txt", "url", urlStr, "delay", delay)
-		return delay, nil
-	}
-
-	return 0, nil
-}
-
-// applyCrawlDelayToLimiter updates the rate limiter with the crawl delay.
-func (f *FetchCoordinator) applyCrawlDelayToLimiter(urlStr string, crawlDelay time.Duration) {
-	fakeHeaders := http.Header{}
-	fakeHeaders.Set("Retry-After", fmt.Sprintf("%.0f", crawlDelay.Seconds()))
-	f.limiter.UpdateRetryAfter(urlStr, fakeHeaders)
 }
 
 // performFetch executes the HTTP fetch with retry logic.

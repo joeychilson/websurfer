@@ -8,14 +8,12 @@ import (
 
 	"github.com/joeychilson/websurfer/cache"
 	"github.com/joeychilson/websurfer/config"
-	"github.com/joeychilson/websurfer/fetcher"
 	"github.com/joeychilson/websurfer/headless"
 	"github.com/joeychilson/websurfer/parser"
 	htmlparser "github.com/joeychilson/websurfer/parser/html"
 	"github.com/joeychilson/websurfer/parser/pdf"
 	"github.com/joeychilson/websurfer/parser/rules"
 	"github.com/joeychilson/websurfer/ratelimit"
-	"github.com/joeychilson/websurfer/robots"
 	urlpkg "github.com/joeychilson/websurfer/url"
 )
 
@@ -38,19 +36,6 @@ func New(cfg *config.Config) (*Client, error) {
 
 	logger := slog.Default()
 
-	userAgent := cfg.Default.Fetch.UserAgent
-	if userAgent == "" {
-		userAgent = config.DefaultUserAgent
-	}
-
-	robotsCacheTTL := cfg.Default.Fetch.GetRobotsTxtCacheTTL()
-	f, err := fetcher.New(cfg.Default.Fetch)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create fetcher: %w", err)
-	}
-	robotsClient := f.GetHTTPClient()
-	robotsChecker := robots.New(userAgent, robotsCacheTTL, robotsClient)
-
 	limiterConfig := cfg.Default.RateLimit
 	respectRetryAfter := true
 	limiterConfig.RespectRetryAfter = &respectRetryAfter
@@ -70,7 +55,7 @@ func New(cfg *config.Config) (*Client, error) {
 
 	headlessBrowser := headless.New(headless.WithLogger(logger))
 
-	coordinator := NewFetchCoordinator(cfg, robotsChecker, limiter, parserRegistry, headlessBrowser, logger)
+	coordinator := NewFetchCoordinator(cfg, limiter, parserRegistry, headlessBrowser, logger)
 	cacheManager := NewCacheManager(nil, logger, coordinator)
 
 	return &Client{
@@ -123,7 +108,7 @@ type Response struct {
 	CachedAt    time.Time
 }
 
-// Fetch retrieves content from the given URL, respecting robots.txt and rate limits.
+// Fetch retrieves content from the given URL with rate limiting.
 func (c *Client) Fetch(ctx context.Context, urlStr string) (*Response, error) {
 	urlStr = urlpkg.Transform(urlStr)
 
