@@ -34,14 +34,14 @@ func TestTransform(t *testing.T) {
 			want:  "https://raw.githubusercontent.com/golang/go/master/src/fmt/print.go",
 		},
 		{
-			name:  "arxiv abs to official html",
+			name:  "arxiv abs to official pdf",
 			input: "https://arxiv.org/abs/2301.00001",
-			want:  "https://arxiv.org/html/2301.00001",
+			want:  "https://arxiv.org/pdf/2301.00001",
 		},
 		{
-			name:  "arxiv www abs to official html",
+			name:  "arxiv www abs to official pdf",
 			input: "https://www.arxiv.org/abs/2301.00001",
-			want:  "https://www.arxiv.org/html/2301.00001",
+			want:  "https://www.arxiv.org/pdf/2301.00001",
 		},
 		{
 			name:  "arxiv non-abs unchanged",

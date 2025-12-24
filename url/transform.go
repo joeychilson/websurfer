@@ -35,13 +35,13 @@ func transformGitHub(u *url.URL) string {
 	return u.String()
 }
 
-// transformArXiv converts arXiv abstract URLs to official arXiv HTML URLs for easier parsing.
-// arxiv.org/abs/2301.00001 → arxiv.org/html/2301.00001
+// transformArXiv converts arXiv abstract URLs to official arXiv PDF URLs for easier parsing.
+// arxiv.org/abs/2301.00001 → arxiv.org/pdf/2301.00001
 func transformArXiv(u *url.URL) string {
 	if !strings.HasPrefix(u.Path, "/abs/") {
 		return u.String()
 	}
 
-	u.Path = strings.Replace(u.Path, "/abs/", "/html/", 1)
+	u.Path = strings.Replace(u.Path, "/abs/", "/pdf/", 1)
 	return u.String()
 }
