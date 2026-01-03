@@ -1,22 +1,6 @@
 # WebSurfer
 
-WebSurfer is a high-performance API designed to help Large Language Models (LLMs) surf the web. It fetches, parses, and processes web content (HTML, PDF, Markdown) into LLM-friendly formats with built-in token estimation, pagination, and caching.
-
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/websurfer?referralCode=NhCCIt&utm_medium=integration&utm_source=template&utm_campaign=generic)
-
-## Features
-
-- **Smart Fetching**: Handles dynamic content, redirects, and various content types.
-- **Content Parsing**: Converts HTML and PDF to clean Markdown text.
-- **Token Awareness**: Estimates tokens and supports pagination (offsets/limits) to fit context windows.
-- **Caching**: Redis-backed caching with configurable TTLs to speed up repeated requests.
-- **Politeness**: Respects `robots.txt` (configurable), rate limits requests, and handles retries gracefully.
-- **Configurable**: Site-specific rules for timeouts, caching strategies, and user agents.
-
-## Prerequisites
-
-- **Go** (1.25 or later)
-- **Redis** (required for caching)
+WebSurfer is a high-performance API designed to help Large Language Models (LLMs) surf the web.
 
 ## Getting Started
 
